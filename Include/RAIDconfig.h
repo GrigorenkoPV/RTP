@@ -195,9 +195,10 @@ struct cfg_t;
 #pragma pack(push) 
 #pragma pack(1) 
 #ifdef STUDENTBUILD
-RAIDLIST(2,
+RAIDLIST(3,
     RAID(RAID5,0),
-    RAID(RS,1,unsigned,Redundancy)
+    RAID(RS,1,unsigned,Redundancy),
+    RAID(RTP,0)
     )
 #else
 RAIDLIST(5,
