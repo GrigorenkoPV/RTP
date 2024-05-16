@@ -5,12 +5,14 @@
 class CRTPProcessor : public CRAIDProcessor {
  public:
   /// initialize coding-related parameters
-  CRTPProcessor(RTPParams* P  /// the configuration file
+  explicit CRTPProcessor(RTPParams* P  /// the configuration file
   );
 
   ~CRTPProcessor() override = default;
 
  protected:
+  unsigned const p;
+
   bool IsCorrectable(unsigned int ErasureSetID) override;
 
   bool DecodeDataSubsymbols(unsigned long long int StripeID,

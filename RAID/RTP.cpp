@@ -1,7 +1,35 @@
 #include "RTP.h"
+#include <stdexcept>
 
-CRTPProcessor::CRTPProcessor(RTPParams* P) : CRAIDProcessor(0, 0, nullptr, 0) {
-  // TODO
+namespace {
+bool isPrime(unsigned n) {
+  switch (n) {
+    case 0:
+    case 1:
+      return false;
+    case 2:
+    case 3:
+      return true;
+    default:
+      if (n % 2 == 0) {
+        return false;
+      }
+      for (unsigned i = 3; (i * i) <= n; i += 2) {
+        if (n % i == 0) {
+          return false;
+        }
+      }
+      return true;
+  }
+}
+}  // namespace
+
+CRTPProcessor::CRTPProcessor(RTPParams* P)
+    : CRAIDProcessor(P->CodeDimension + 3, P->CodeDimension, P, sizeof(*P)),
+      p(P->CodeDimension + 1) {
+  if (!isPrime(p)) {
+    throw std::invalid_argument("Dimension+1 should be prime");
+  }
 }
 
 bool CRTPProcessor::IsCorrectable(unsigned int ErasureSetID) {
