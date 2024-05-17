@@ -34,32 +34,9 @@ CRTPProcessor::CRTPProcessor(RTPParams* P  /// the configuration file
   }
 }
 
-/// Check if it is possible to correct a given combination of erasures
-/// If yes, the method should initialize the internal data structures
-/// and be ready to do the actual erasure correction. This combination of erasures
-///  is uniquely identified by ErasureID
-///@return true if the specified combination of erasures is correctable
-bool CRTPProcessor::IsCorrectable(
-    unsigned ErasureSetID  /// identifies the erasure combination. This will not exceed m_Length-1
-) {
-  // TODO
-  return false;
-}
-
-/// decode a number of payload subsymbols from a given symbol
-///@return true on success
-bool CRTPProcessor::DecodeDataSubsymbols(
-    unsigned long long StripeID,  /// the stripe to be processed
-    unsigned ErasureSetID,        /// identifies the load balancing offset
-    unsigned SymbolID,            /// the symbol to be processed
-    unsigned SubsymbolID,         /// the first subsymbol to be processed
-    unsigned Subsymbols2Decode,   /// the number of subsymbols within this symbol to be decoded
-    unsigned char*
-        pDest,  /// destination array. Must have size at least Subsymbols2Decode*m_StripeUnitSize
-    size_t ThreadID  /// the ID of the calling thread
-) {
-  // TODO
-  return false;
+bool CRTPProcessor::Attach(CDiskArray* pArray, unsigned int ConcurrentThreads) {
+  xor_buffer = AlignedBuffer(ConcurrentThreads * m_StripeUnitSize * 2);
+  return CRAIDProcessor::Attach(pArray, ConcurrentThreads);
 }
 
 /// decode a number of payload subsymbols from a given symbol
@@ -107,6 +84,9 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
                                   unsigned ErasureSetID,  /// identifies the load balancing offset
                                   size_t ThreadID         /// identifies the calling thread
 ) {
+  if (GetNumOfErasures(ErasureSetID)) {
+    return true;
+  }
   // TODO
   return false;
 }

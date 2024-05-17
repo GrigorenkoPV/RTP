@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AlignedBuffer.h"
 #include "RAIDProcessor.h"
 
 class CRTPProcessor : public CRAIDProcessor {
@@ -18,13 +19,15 @@ class CRTPProcessor : public CRAIDProcessor {
   /// and be ready to do the actual erasure correction. This combination of erasures
   ///  is uniquely identified by ErasureID
   ///@return true if the specified combination of erasures is correctable
-  bool IsCorrectable(
+  inline bool IsCorrectable(
       unsigned ErasureSetID  /// identifies the erasure combination. This will not exceed m_Length-1
-      ) override;
+      ) override {
+    return GetNumOfErasures(ErasureSetID) <= 3;
+  }
 
   /// decode a number of payload subsymbols from a given symbol
   ///@return true on success
-  bool DecodeDataSubsymbols(
+  inline bool DecodeDataSubsymbols(
       unsigned long long StripeID,  /// the stripe to be processed
       unsigned ErasureSetID,        /// identifies the load balancing offset
       unsigned SymbolID,            /// the symbol to be processed
@@ -33,8 +36,15 @@ class CRTPProcessor : public CRAIDProcessor {
       unsigned char*
           pDest,  /// destination array. Must have size at least Subsymbols2Decode*m_StripeUnitSize
       size_t ThreadID  /// the ID of the calling thread
-      ) override;
+      ) override {
+    // This is a stub which should never be called
+    return false;
+  }
 
+ public:
+  bool Attach(CDiskArray* pArray, unsigned int ConcurrentThreads) override;
+
+ protected:
   /// decode a number of payload subsymbols from a given symbol
   ///@return true on success
   bool DecodeDataSymbols(
@@ -70,4 +80,6 @@ class CRTPProcessor : public CRAIDProcessor {
                      unsigned ErasureSetID,        /// identifies the load balancing offset
                      size_t ThreadID               /// identifies the calling thread
                      ) override;
+
+  AlignedBuffer xor_buffer;
 };
