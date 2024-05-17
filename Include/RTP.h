@@ -41,9 +41,6 @@ class CRTPProcessor : public CRAIDProcessor {
     return false;
   }
 
- public:
-  bool Attach(CDiskArray* pArray, unsigned int ConcurrentThreads) override;
-
  protected:
   /// decode a number of payload subsymbols from a given symbol
   ///@return true on success
@@ -81,5 +78,28 @@ class CRTPProcessor : public CRAIDProcessor {
                      size_t ThreadID               /// identifies the calling thread
                      ) override;
 
-  AlignedBuffer xor_buffer;
+ private:
+  [[nodiscard]] inline size_t SymbolSize() const noexcept {
+    return m_StripeUnitsPerSymbol * m_StripeUnitSize;
+  }
+
+  [[nodiscard]] AlignedBuffer read_symbol(
+      unsigned long long StripeID,  /// the stripe to be checked
+      unsigned ErasureSetID,        /// identifies the load balancing offset,
+      unsigned SymbolID             /// identifies the disk to be accessed
+  );
+
+  AlignedBuffer& read_symbol(unsigned long long StripeID,  /// the stripe to be checked
+                             unsigned ErasureSetID,        /// identifies the load balancing offset,
+                             unsigned SymbolID,            /// identifies the disk to be accessed
+                             AlignedBuffer& out);
+
+  [[nodiscard]] inline std::size_t DiagNum(std::size_t symbolId,
+                                           std::size_t subsymbolId) const noexcept {
+    return (symbolId + subsymbolId) % p;
+  }
+  [[nodiscard]] inline std::size_t ADiagNum(std::size_t symbolId,
+                                            std::size_t subsymbolId) const noexcept {
+    return (p + symbolId - subsymbolId) % p;
+  }
 };

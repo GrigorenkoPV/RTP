@@ -1,34 +1,85 @@
 #pragma once
 
+#include <cassert>
 #include <cstddef>
+#include <cstring>
 #include <utility>
 #include "arithmetic.h"
 
 class AlignedBuffer {
  private:
-  unsigned char* data = nullptr;
+  std::size_t size_ = 0;
+  unsigned char* data_ = nullptr;
 
  public:
   AlignedBuffer() = default;
-  inline explicit AlignedBuffer(std::size_t size) : data(AlignedMalloc(size)) {}
+  inline explicit AlignedBuffer(std::size_t size, bool zero = false)
+      : size_(size), data_(AlignedMalloc(size)) {
+    if (zero) {
+      memset(data_, 0, size);
+    }
+  }
   AlignedBuffer(AlignedBuffer const&) = delete;
-  inline AlignedBuffer(AlignedBuffer&& other) noexcept : data(other.data) { other.data = nullptr; }
+  inline AlignedBuffer(AlignedBuffer&& other) noexcept : size_(other.size_), data_(other.data_) {
+    other.size_ = 0;
+    other.data_ = nullptr;
+  }
   AlignedBuffer& operator=(AlignedBuffer const&) = delete;
   inline AlignedBuffer& operator=(AlignedBuffer&& other) noexcept {
-    if (this != &other) {
+    if (this != std::addressof(other)) {
       swap(*this, other);
       other.reset();
     }
     return *this;
   }
-  inline void reset() noexcept(noexcept(AlignedFree(data))) {
-    AlignedFree(data);
-    data = nullptr;
+  inline void reset() noexcept(noexcept(AlignedFree(data_))) {
+    size_ = 0;
+    AlignedFree(data_);
+    data_ = nullptr;
   }
   inline ~AlignedBuffer() { reset(); };
   inline friend void swap(AlignedBuffer& a, AlignedBuffer& b) noexcept {
-    std::swap(a.data, b.data);
+    std::swap(a.size_, b.size_);
+    std::swap(a.data_, b.data_);
   }
 
-  inline unsigned char* operator[](std::size_t i) const& noexcept { return data + i; }
+  [[nodiscard]] inline unsigned char& operator[](std::size_t i) & noexcept {
+    assert(i < size_);
+    return data_[i];
+  }
+  [[nodiscard]] inline unsigned char const& operator[](std::size_t i) const& noexcept {
+    assert(i < size_);
+    return data_[i];
+  }
+
+  [[nodiscard]] inline unsigned char* data() & noexcept { return data_; }
+  [[nodiscard]] inline unsigned char const* data() const& noexcept { return data_; }
+  [[nodiscard]] inline std::size_t size() const noexcept { return size_; }
+
+  [[nodiscard]] inline bool isZero() const noexcept {
+    for (std::size_t i = 0; i < size_; ++i) {
+      if (data_[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] inline friend bool operator==(AlignedBuffer const& a,
+                                              AlignedBuffer const& b) noexcept {
+    if (a.size_ != b.size_) {
+      return false;
+    }
+    for (std::size_t i = 0; i < a.size_; ++i) {
+      if (a[i] != b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] inline friend bool operator!=(AlignedBuffer const& a,
+                                              AlignedBuffer const& b) noexcept {
+    return !(a == b);
+  }
 };

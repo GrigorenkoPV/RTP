@@ -34,9 +34,21 @@ CRTPProcessor::CRTPProcessor(RTPParams* P  /// the configuration file
   }
 }
 
-bool CRTPProcessor::Attach(CDiskArray* pArray, unsigned int ConcurrentThreads) {
-  xor_buffer = AlignedBuffer(ConcurrentThreads * m_StripeUnitSize * 2);
-  return CRAIDProcessor::Attach(pArray, ConcurrentThreads);
+AlignedBuffer CRTPProcessor::read_symbol(unsigned long long int StripeID,
+                                         unsigned int ErasureSetID,
+                                         unsigned int SymbolID) {
+  auto result = AlignedBuffer(SymbolSize());
+  read_symbol(StripeID, ErasureSetID, SymbolID, result);
+  return result;
+}
+
+AlignedBuffer& CRTPProcessor::read_symbol(unsigned long long int StripeID,
+                                          unsigned int ErasureSetID,
+                                          unsigned int SymbolID,
+                                          AlignedBuffer& out) {
+  assert(out.size() == SymbolSize());
+  ReadStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol, out.data());
+  return out;
 }
 
 /// decode a number of payload subsymbols from a given symbol
@@ -87,6 +99,28 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
   if (GetNumOfErasures(ErasureSetID)) {
     return true;
   }
-  // TODO
-  return false;
+  auto const symbol_size = SymbolSize();
+  auto buffer = AlignedBuffer(symbol_size);
+  auto row = AlignedBuffer(symbol_size, true);
+  auto diag = AlignedBuffer(symbol_size, true);
+  auto adiag = AlignedBuffer(symbol_size, true);
+  for (std::size_t symbolId = 0; symbolId < p; ++symbolId) {
+    auto const& symbol = read_symbol(StripeID, ErasureSetID, symbolId, buffer);
+    XOR(row.data(), symbol.data(), symbol_size);
+    for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
+      auto const d = DiagNum(symbolId, subsymbolID);
+      if (d != p - 1) {
+        XOR(&diag[d * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitsPerSymbol],
+            m_StripeUnitsPerSymbol);
+      }
+      auto const ad = ADiagNum(symbolId, subsymbolID);
+      if (ad != p - 1) {
+        XOR(&adiag[ad * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitsPerSymbol],
+            m_StripeUnitsPerSymbol);
+      }
+    }
+  }
+
+  return row.isZero() && diag == read_symbol(StripeID, ErasureSetID, p, buffer) &&
+         adiag == read_symbol(StripeID, ErasureSetID, p + 1, buffer);
 }

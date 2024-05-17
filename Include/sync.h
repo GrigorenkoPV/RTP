@@ -140,7 +140,7 @@ inline bool CondWakeAll(tCondVariable& C)
 ///wake a thread waiting for the condition
 inline bool CondWake(tCondVariable& C)
 {
-	pthread_cond_signal(&C)==0;
+	return pthread_cond_signal(&C)==0;
 };
 
 
