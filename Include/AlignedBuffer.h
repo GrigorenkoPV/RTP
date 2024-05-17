@@ -82,4 +82,10 @@ class AlignedBuffer {
                                               AlignedBuffer const& b) noexcept {
     return !(a == b);
   }
+
+  inline AlignedBuffer& operator^=(AlignedBuffer const& other) & {
+    assert(this->size() == other.size());
+    XOR(this->data(), other.data(), this->size());
+    return *this;
+  }
 };

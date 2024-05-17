@@ -38,17 +38,29 @@ AlignedBuffer CRTPProcessor::read_symbol(unsigned long long int StripeID,
                                          unsigned int ErasureSetID,
                                          unsigned int SymbolID) {
   auto result = AlignedBuffer(SymbolSize());
-  read_symbol(StripeID, ErasureSetID, SymbolID, result);
+  ReadSymbol(StripeID, ErasureSetID, SymbolID, result);
   return result;
 }
 
-AlignedBuffer& CRTPProcessor::read_symbol(unsigned long long int StripeID,
-                                          unsigned int ErasureSetID,
-                                          unsigned int SymbolID,
-                                          AlignedBuffer& out) {
+AlignedBuffer& CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
+                                         unsigned int ErasureSetID,
+                                         unsigned int SymbolID,
+                                         AlignedBuffer& out) {
   assert(out.size() == SymbolSize());
-  ReadStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol, out.data());
+  auto ok = ReadStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol, out.data());
+  if (!ok) {
+    throw std::runtime_error("Error reading data");
+  }
   return out;
+}
+
+bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
+                                unsigned int ErasureSetID,
+                                unsigned int SymbolID,
+                                AlignedBuffer const& symbol) {
+  assert(symbol.size() == SymbolSize());
+  return WriteStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol,
+                         symbol.data());
 }
 
 /// decode a number of payload subsymbols from a given symbol
@@ -58,9 +70,8 @@ bool CRTPProcessor::DecodeDataSymbols(
     unsigned ErasureSetID,        /// identifies the load balancing offset
     unsigned SymbolID,            /// the first symbol to be processed
     unsigned Symbols2Decode,      /// the number of subsymbols within this symbol to be decoded
-    unsigned char*
-        pDest,  /// destination array. Must have size at least Subsymbols2Decode*m_StripeUnitSize
-    size_t ThreadID  /// the ID of the calling thread
+    unsigned char* pDest,         /// destination array.
+    size_t ThreadID               /// the ID of the calling thread
 ) {
   // TODO
   return false;
@@ -73,8 +84,27 @@ bool CRTPProcessor::EncodeStripe(unsigned long long StripeID,  /// the stripe to
                                  const unsigned char* pData,  /// the data to be envoced
                                  size_t ThreadID              /// the ID of the calling thread
 ) {
-  // TODO
-  return false;
+  assert(IsCorrectable(ErasureSetID));
+  auto ok = true;
+  auto const write_symbol = [=, this, &ok](std::size_t symbolId, AlignedBuffer const& symbol) {
+    if (!IsErased(ErasureSetID, symbolId)) {
+      ok &= WriteSymbol(StripeID, ErasureSetID, symbolId, symbol);
+    }
+  };
+  auto const symbol_size = SymbolSize();
+  auto buffer = AlignedBuffer(symbol_size);
+  auto next_symbol = [&buffer, symbolId = 0, pData, symbol_size,
+                      &write_symbol]() mutable -> AlignedBuffer const& {
+    memmove(buffer.data(), pData + symbolId * symbol_size, symbol_size);
+    write_symbol(symbolId, buffer);
+    ++symbolId;
+    return buffer;
+  };
+  auto [row, diag, adiag] = row_diag_adiag(next_symbol, symbol_size);
+  write_symbol(p - 1, row);
+  write_symbol(p, diag);
+  write_symbol(p + 1, adiag);
+  return ok;
 }
 
 /// update some information symbols and the corresponding check symbols
@@ -101,26 +131,10 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
   }
   auto const symbol_size = SymbolSize();
   auto buffer = AlignedBuffer(symbol_size);
-  auto row = AlignedBuffer(symbol_size, true);
-  auto diag = AlignedBuffer(symbol_size, true);
-  auto adiag = AlignedBuffer(symbol_size, true);
-  for (std::size_t symbolId = 0; symbolId < p; ++symbolId) {
-    auto const& symbol = read_symbol(StripeID, ErasureSetID, symbolId, buffer);
-    XOR(row.data(), symbol.data(), symbol_size);
-    for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
-      auto const d = DiagNum(symbolId, subsymbolID);
-      if (d != p - 1) {
-        XOR(&diag[d * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitsPerSymbol],
-            m_StripeUnitsPerSymbol);
-      }
-      auto const ad = ADiagNum(symbolId, subsymbolID);
-      if (ad != p - 1) {
-        XOR(&adiag[ad * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitsPerSymbol],
-            m_StripeUnitsPerSymbol);
-      }
-    }
-  }
-
-  return row.isZero() && diag == read_symbol(StripeID, ErasureSetID, p, buffer) &&
-         adiag == read_symbol(StripeID, ErasureSetID, p + 1, buffer);
+  std::size_t symbolId = 0;
+  auto next_symbol = [this, StripeID, ErasureSetID, &buffer, &symbolId]() -> AlignedBuffer const& {
+    return ReadSymbol(StripeID, ErasureSetID, symbolId++, buffer);
+  };
+  auto [row, diag, adiag] = row_diag_adiag(next_symbol, symbol_size);
+  return row == next_symbol() && diag == next_symbol() && adiag == next_symbol();
 }

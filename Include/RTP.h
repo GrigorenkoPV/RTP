@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include "AlignedBuffer.h"
 #include "RAIDProcessor.h"
 
@@ -78,6 +79,13 @@ class CRTPProcessor : public CRAIDProcessor {
                      size_t ThreadID               /// identifies the calling thread
                      ) override;
 
+  // TODO: remove this once UpdateInformationSymbols is implemented
+  inline bool GetEncodingStrategy(unsigned int ErasureSetID,
+                                  unsigned int StripeUnitID,
+                                  unsigned int Subsymbols2Encode) override {
+    return true;
+  }
+
  private:
   [[nodiscard]] inline size_t SymbolSize() const noexcept {
     return m_StripeUnitsPerSymbol * m_StripeUnitSize;
@@ -89,17 +97,58 @@ class CRTPProcessor : public CRAIDProcessor {
       unsigned SymbolID             /// identifies the disk to be accessed
   );
 
-  AlignedBuffer& read_symbol(unsigned long long StripeID,  /// the stripe to be checked
-                             unsigned ErasureSetID,        /// identifies the load balancing offset,
-                             unsigned SymbolID,            /// identifies the disk to be accessed
-                             AlignedBuffer& out);
+  AlignedBuffer& ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                            unsigned ErasureSetID,        /// identifies the load balancing offset,
+                            unsigned SymbolID,            /// identifies the disk to be accessed
+                            AlignedBuffer& out);
 
-  [[nodiscard]] inline std::size_t DiagNum(std::size_t symbolId,
-                                           std::size_t subsymbolId) const noexcept {
-    return (symbolId + subsymbolId) % p;
+  bool WriteSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                   unsigned ErasureSetID,        /// identifies the load balancing offset,
+                   unsigned SymbolID,            /// identifies the disk to be accessed
+                   AlignedBuffer const& symbol);
+
+  template <bool IsAnti>
+  [[nodiscard]] std::size_t DiagNum(std::size_t symbolId, std::size_t subsymbolId) const noexcept {
+    if constexpr (IsAnti) {
+      return (p + symbolId - subsymbolId) % p;
+    } else {
+      return (symbolId + subsymbolId) % p;
+    }
   }
-  [[nodiscard]] inline std::size_t ADiagNum(std::size_t symbolId,
-                                            std::size_t subsymbolId) const noexcept {
-    return (p + symbolId - subsymbolId) % p;
+
+  template <bool IsAnti>
+  inline void AddToDiag(AlignedBuffer& diag,
+                        std::size_t symbolId,
+                        AlignedBuffer const& symbol) const {
+    for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
+      auto const d = DiagNum<IsAnti>(symbolId, subsymbolID);
+      if (d < m_StripeUnitsPerSymbol) {
+        XOR(&diag[d * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitSize], m_StripeUnitSize);
+      } else {
+        assert(d == m_StripeUnitsPerSymbol);
+      }
+    }
+  }
+
+  inline void AddToDiags(AlignedBuffer& diag,
+                         AlignedBuffer& adiag,
+                         std::size_t symbolId,
+                         AlignedBuffer const& symbol) const {
+    AddToDiag<false>(diag, symbolId, symbol);
+    AddToDiag<true>(adiag, symbolId, symbol);
+  }
+
+  inline std::array<AlignedBuffer, 3> row_diag_adiag(auto& next_symbol,
+                                                     std::size_t symbol_size) const {
+    auto row = AlignedBuffer(symbol_size, true);
+    auto diag = AlignedBuffer(symbol_size, true);
+    auto adiag = AlignedBuffer(symbol_size, true);
+    for (std::size_t symbolId = 0; symbolId < m_Dimension; ++symbolId) {
+      AlignedBuffer const& symbol = next_symbol();
+      row ^= symbol;
+      AddToDiags(diag, adiag, symbolId, symbol);
+    }
+    AddToDiags(diag, adiag, p - 1, row);
+    return {std::move(row), std::move(diag), std::move(adiag)};
   }
 };
