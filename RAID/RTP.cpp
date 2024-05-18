@@ -126,7 +126,21 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
     // We have a RAID4 disk...
     if (NumErasedRAID4Symbols == 1) {
       // ...and we can use row parity
-      // TODO: restore using row parity
+      auto const size = Subsymbols2Decode * m_StripeUnitSize;
+      auto read_buf = AlignedBuffer(size);
+      auto xor_buf = AlignedBuffer(size, true);
+      auto ok = true;
+      for (std::size_t s = 0; s < p; ++s) {
+        if (s == SymbolID) {
+          continue;
+        }
+        assert(!IsErased(ErasureSetID, s));
+        ok &= ReadStripeUnit(StripeID, ErasureSetID, s, SubsymbolID, Subsymbols2Decode,
+                             read_buf.data());
+        xor_buf ^= read_buf;
+      }
+      memcpy(pDest, xor_buf.data(), size);
+      return ok;
     }
   } else {
     // We have an (anti)diagonal disk...
