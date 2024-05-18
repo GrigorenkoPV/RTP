@@ -139,18 +139,4 @@ class CRTPProcessor : public CRAIDProcessor {
     AddToDiag<false>(diag, symbolId, symbol);
     AddToDiag<true>(adiag, symbolId, symbol);
   }
-
-  inline std::array<AlignedBuffer, 3> row_diag_adiag(auto& next_symbol,
-                                                     std::size_t symbol_size) const {
-    auto row = AlignedBuffer(symbol_size, true);
-    auto diag = AlignedBuffer(symbol_size, true);
-    auto adiag = AlignedBuffer(symbol_size, true);
-    for (std::size_t symbolId = 0; symbolId < m_Dimension; ++symbolId) {
-      AlignedBuffer const& symbol = next_symbol();
-      row ^= symbol;
-      AddToDiags(diag, adiag, symbolId, symbol);
-    }
-    AddToDiags(diag, adiag, p - 1, row);
-    return {std::move(row), std::move(diag), std::move(adiag)};
-  }
 };
