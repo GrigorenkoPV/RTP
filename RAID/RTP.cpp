@@ -70,12 +70,6 @@ bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
                          symbol.data());
 }
 
-namespace {
-auto is_ordered(int a, int b) -> bool {
-  return b < 0 || (0 <= a && a < b);
-}
-}  // namespace
-
 /// decode a number of payload subsymbols from a given symbol
 ///@return true on success
 bool CRTPProcessor::DecodeDataSymbols(
@@ -98,10 +92,11 @@ bool CRTPProcessor::DecodeDataSymbols(
   auto const X = GetErasedPosition(ErasureSetID, 0);
   auto const Y = GetErasedPosition(ErasureSetID, 1);
   auto const Z = GetErasedPosition(ErasureSetID, 2);
+  auto const is_ordered = [](int a, int b) -> bool { return b < 0 || (0 <= a && a < b); };
   assert(is_ordered(X, Y) && is_ordered(Y, Z));
   if (!inRange(X) && !inRange(Y) && !inRange(Z)) {
+    // All the symbols are intact, read as is.
     auto result = true;
-    // read the data as is
     for (auto symbolId = FirstSymbolID; symbolId < LastSymbolID; symbolId++) {
       result &= ReadSymbol(StripeID, ErasureSetID, symbolId,
                            pDest + (symbolId - FirstSymbolID) * SymbolSize());
@@ -120,11 +115,36 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
                                          unsigned int Subsymbols2Decode,
                                          unsigned char* pDest,
                                          size_t ThreadID) {
-  if (IsErased(ErasureSetID, SymbolID)) {
-    // TODO
+  // If the symbol is OK, just read from it.
+  if (!IsErased(ErasureSetID, SymbolID)) {
+    return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, SubsymbolID, Subsymbols2Decode, pDest);
+  }
+  auto const NumErasedRAID4Symbols =
+      GetNumOfErasures(ErasureSetID) - IsErased(ErasureSetID, p) - IsErased(ErasureSetID, p + 1);
+
+  if (SymbolID < p) {
+    // We have a RAID4 disk...
+    if (NumErasedRAID4Symbols == 1) {
+      // ...and we can use row parity
+      // TODO: restore using row parity
+    }
+  } else {
+    // We have an (anti)diagonal disk...
+    if (NumErasedRAID4Symbols <= 1) {
+      // ...and we can recompute it
+      // TODO: restore RAID4 and recompute (anti)diagonal
+    }
+  }
+
+  // No luck, we have to do
+  auto symbol = AlignedBuffer(SymbolSize());
+  auto const ok = DecodeDataSymbols(StripeID, ErasureSetID, SymbolID, 1, symbol.data(), ThreadID);
+  if (!ok) {
     return false;
   }
-  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, SubsymbolID, Subsymbols2Decode, pDest);
+  memcpy(pDest, symbol.data() + SubsymbolID * m_StripeUnitSize,
+         Subsymbols2Decode * m_StripeUnitSize);
+  return true;
 }
 
 /// encode and write the whole CRAIDProcessorstripe
@@ -147,7 +167,7 @@ bool CRTPProcessor::EncodeStripe(unsigned long long StripeID,  /// the stripe to
   auto diag = AlignedBuffer(symbol_size, true);
   auto adiag = AlignedBuffer(symbol_size, true);
   for (std::size_t symbolId = 0; symbolId < m_Dimension; ++symbolId) {
-    memmove(buffer.data(), pData + symbolId * symbol_size, symbol_size);
+    memcpy(buffer.data(), pData + symbolId * symbol_size, symbol_size);
     auto const& symbol = buffer;
     write_symbol(symbolId, symbol);
     row ^= symbol;
