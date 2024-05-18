@@ -34,9 +34,9 @@ CRTPProcessor::CRTPProcessor(RTPParams* P  /// the configuration file
   }
 }
 
-AlignedBuffer CRTPProcessor::read_symbol(unsigned long long int StripeID,
-                                         unsigned int ErasureSetID,
-                                         unsigned int SymbolID) {
+AlignedBuffer CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
+                                        unsigned int ErasureSetID,
+                                        unsigned int SymbolID) {
   auto result = AlignedBuffer(SymbolSize());
   ReadSymbol(StripeID, ErasureSetID, SymbolID, result);
   return result;
@@ -47,11 +47,18 @@ AlignedBuffer& CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
                                          unsigned int SymbolID,
                                          AlignedBuffer& out) {
   assert(out.size() == SymbolSize());
-  auto ok = ReadStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol, out.data());
+  auto ok = ReadSymbol(StripeID, ErasureSetID, SymbolID, out.data());
   if (!ok) {
     throw std::runtime_error("Error reading data");
   }
   return out;
+}
+
+bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
+                               unsigned int ErasureSetID,
+                               unsigned int SymbolID,
+                               unsigned char* out) {
+  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol, out);
 }
 
 bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
@@ -73,8 +80,28 @@ bool CRTPProcessor::DecodeDataSymbols(
     unsigned char* pDest,         /// destination array.
     size_t ThreadID               /// the ID of the calling thread
 ) {
-  // TODO
-  return false;
+  if (GetNumOfErasures(ErasureSetID)) {
+    return false;
+  }
+  auto Result = true;
+  // read the data as is
+  for (unsigned S = SymbolID; S < SymbolID + Symbols2Decode; S++, pDest += SymbolSize()) {
+    Result &= ReadSymbol(StripeID, ErasureSetID, S, pDest);
+  }
+  return Result;
+}
+
+bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
+                                         unsigned int ErasureSetID,
+                                         unsigned int SymbolID,
+                                         unsigned int SubsymbolID,
+                                         unsigned int Subsymbols2Decode,
+                                         unsigned char* pDest,
+                                         size_t ThreadID) {
+  if (GetNumOfErasures(ErasureSetID)) {
+    return false;
+  }
+  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, SubsymbolID, Subsymbols2Decode, pDest);
 }
 
 /// encode and write the whole CRAIDProcessorstripe

@@ -28,7 +28,7 @@ class CRTPProcessor : public CRAIDProcessor {
 
   /// decode a number of payload subsymbols from a given symbol
   ///@return true on success
-  inline bool DecodeDataSubsymbols(
+  bool DecodeDataSubsymbols(
       unsigned long long StripeID,  /// the stripe to be processed
       unsigned ErasureSetID,        /// identifies the load balancing offset
       unsigned SymbolID,            /// the symbol to be processed
@@ -37,10 +37,7 @@ class CRTPProcessor : public CRAIDProcessor {
       unsigned char*
           pDest,  /// destination array. Must have size at least Subsymbols2Decode*m_StripeUnitSize
       size_t ThreadID  /// the ID of the calling thread
-      ) override {
-    // This is a stub which should never be called
-    return false;
-  }
+      ) override;
 
  protected:
   /// decode a number of payload subsymbols from a given symbol
@@ -91,7 +88,7 @@ class CRTPProcessor : public CRAIDProcessor {
     return m_StripeUnitsPerSymbol * m_StripeUnitSize;
   }
 
-  [[nodiscard]] AlignedBuffer read_symbol(
+  [[nodiscard]] AlignedBuffer ReadSymbol(
       unsigned long long StripeID,  /// the stripe to be checked
       unsigned ErasureSetID,        /// identifies the load balancing offset,
       unsigned SymbolID             /// identifies the disk to be accessed
@@ -101,6 +98,11 @@ class CRTPProcessor : public CRAIDProcessor {
                             unsigned ErasureSetID,        /// identifies the load balancing offset,
                             unsigned SymbolID,            /// identifies the disk to be accessed
                             AlignedBuffer& out);
+
+  bool ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                  unsigned ErasureSetID,        /// identifies the load balancing offset,
+                  unsigned SymbolID,            /// identifies the disk to be accessed
+                  unsigned char* out);
 
   bool WriteSymbol(unsigned long long StripeID,  /// the stripe to be checked
                    unsigned ErasureSetID,        /// identifies the load balancing offset,
