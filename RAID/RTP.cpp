@@ -115,32 +115,40 @@ bool CRTPProcessor::DecodeDataSymbols(
     }
 
     auto const NumErasedRaid4Symbols = GetNumErasedRaid4Symbols(ErasureSetID);
-    bool diag_is_anti;
+    bool isAnti;
     if (NumErasedRaid4Symbols > 1) {
       auto diag = AlignedBuffer(symbolSize, false);
-      diag_is_anti = IsErased(ErasureSetID, p);
-      if (diag_is_anti) {
+      isAnti = IsErased(ErasureSetID, p);
+      if (isAnti) {
         assert(!IsErased(ErasureSetID, p + 1));
       }
-      ok &= ReadSymbol(StripeID, ErasureSetID, diag_is_anti ? p + 1 : p, diag.data());
+      ok &= ReadSymbol(StripeID, ErasureSetID, isAnti ? p + 1 : p, diag.data());
       symbols.push_back(std::move(diag));
     }
 
     switch (NumErasedRaid4Symbols) {
-      case 3:
+      case 3: {
         TODO("RTP");
+      }
         [[fallthrough]];
-      case 2:
-        TODO("RDP");
-        break;
-      default:
+      case 2: {
+        auto r = p - 1;
+        for (std::size_t i = 0; i < p - 1; ++i) {
+          auto const d = DiagNum(isAnti, Y, r);
+          r = (p + d - X) % p;
+          assert(r < m_Dimension);
+          TODO("A[r, X] := DIAGSUM(d) ^ diag[d]");
+          TODO("A[r, Y] := ROWSUM(r)");
+        }
+      } break;
+      default: {
         assert(NumErasedRaid4Symbols == 1);
         for (std::size_t s = 0; s < p; ++s) {
           if (s != X) {
             symbols[X] ^= symbols[s];
           }
         }
-        break;
+      } break;
     }
 
     for (auto symbolId = FirstSymbolID; symbolId < LastSymbolID; symbolId++) {
@@ -190,7 +198,7 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
     // We have an (anti)diagonal disk...
     if (NumErasedRAID4Symbols <= 1) {
       // ...and we can recompute it
-      // TODO: restore RAID4 and recompute (anti)diagonal
+      TODO("restore RAID4 and recompute (anti)diagonal");
     }
   }
 
@@ -252,7 +260,7 @@ bool CRTPProcessor::UpdateInformationSymbols(
     const unsigned char* pData,   /// new payload data symbols
     size_t ThreadID               /// the ID of the calling thread
 ) {
-  // TODO
+  TODO("UpdateInformationSymbols")
   return false;
 }
 

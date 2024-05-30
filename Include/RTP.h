@@ -103,21 +103,22 @@ class CRTPProcessor : public CRAIDProcessor {
                                  unsigned SymbolID,      /// identifies the disk to be accessed
                                  AlignedBuffer const& symbol);
 
-  template <bool IsAnti>
-  [[nodiscard]] std::size_t DiagNum(std::size_t symbolId, std::size_t subsymbolId) const noexcept {
-    if constexpr (IsAnti) {
+  [[nodiscard]] inline std::size_t DiagNum(bool isAnti,
+                                           std::size_t symbolId,
+                                           std::size_t subsymbolId) const noexcept {
+    if (isAnti) {
       return (p + symbolId - subsymbolId) % p;
     } else {
       return (symbolId + subsymbolId) % p;
     }
   }
 
-  template <bool IsAnti>
   inline void AddToDiag(AlignedBuffer& diag,
+                        bool isAnti,
                         std::size_t symbolId,
                         AlignedBuffer const& symbol) const {
     for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
-      auto const d = DiagNum<IsAnti>(symbolId, subsymbolID);
+      auto const d = DiagNum(isAnti, symbolId, subsymbolID);
       if (d < m_StripeUnitsPerSymbol) {
         XOR(&diag[d * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitSize], m_StripeUnitSize);
       } else {
@@ -130,8 +131,8 @@ class CRTPProcessor : public CRAIDProcessor {
                          AlignedBuffer& adiag,
                          std::size_t symbolId,
                          AlignedBuffer const& symbol) const {
-    AddToDiag<false>(diag, symbolId, symbol);
-    AddToDiag<true>(adiag, symbolId, symbol);
+    AddToDiag(diag, false, symbolId, symbol);
+    AddToDiag(adiag, true, symbolId, symbol);
   }
 
   [[nodiscard]] unsigned int GetNumErasedRaid4Symbols(unsigned int ErasureSetID) const;
