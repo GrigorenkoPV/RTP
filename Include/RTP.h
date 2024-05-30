@@ -88,26 +88,20 @@ class CRTPProcessor : public CRAIDProcessor {
     return m_StripeUnitsPerSymbol * m_StripeUnitSize;
   }
 
-  [[nodiscard]] AlignedBuffer ReadSymbol(
-      unsigned long long StripeID,  /// the stripe to be checked
-      unsigned ErasureSetID,        /// identifies the load balancing offset,
-      unsigned SymbolID             /// identifies the disk to be accessed
-  );
+  [[nodiscard]] bool ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                                unsigned ErasureSetID,  /// identifies the load balancing offset,
+                                unsigned SymbolID,      /// identifies the disk to be accessed
+                                AlignedBuffer& out);
 
-  AlignedBuffer& ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
-                            unsigned ErasureSetID,        /// identifies the load balancing offset,
-                            unsigned SymbolID,            /// identifies the disk to be accessed
-                            AlignedBuffer& out);
+  [[nodiscard]] bool ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                                unsigned ErasureSetID,  /// identifies the load balancing offset,
+                                unsigned SymbolID,      /// identifies the disk to be accessed
+                                unsigned char* out);
 
-  bool ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
-                  unsigned ErasureSetID,        /// identifies the load balancing offset,
-                  unsigned SymbolID,            /// identifies the disk to be accessed
-                  unsigned char* out);
-
-  bool WriteSymbol(unsigned long long StripeID,  /// the stripe to be checked
-                   unsigned ErasureSetID,        /// identifies the load balancing offset,
-                   unsigned SymbolID,            /// identifies the disk to be accessed
-                   AlignedBuffer const& symbol);
+  [[nodiscard]] bool WriteSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                                 unsigned ErasureSetID,  /// identifies the load balancing offset,
+                                 unsigned SymbolID,      /// identifies the disk to be accessed
+                                 AlignedBuffer const& symbol);
 
   template <bool IsAnti>
   [[nodiscard]] std::size_t DiagNum(std::size_t symbolId, std::size_t subsymbolId) const noexcept {
@@ -139,4 +133,6 @@ class CRTPProcessor : public CRAIDProcessor {
     AddToDiag<false>(diag, symbolId, symbol);
     AddToDiag<true>(adiag, symbolId, symbol);
   }
+
+  [[nodiscard]] unsigned int GetNumErasedRaid4Symbols(unsigned int ErasureSetID) const;
 };

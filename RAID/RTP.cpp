@@ -1,5 +1,13 @@
 #include "RTP.h"
+#include <cassert>
 #include <stdexcept>
+#include <string>
+#include <vector>
+
+using namespace std::string_literals;
+
+#define TODO(msg) \
+  throw std::runtime_error(""s + __FILE__ + ":" + std::to_string(__LINE__) + " TODO: " + msg);
 
 namespace {
 bool isPrime(unsigned n) {
@@ -34,24 +42,12 @@ CRTPProcessor::CRTPProcessor(RTPParams* P  /// the configuration file
   }
 }
 
-AlignedBuffer CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
-                                        unsigned int ErasureSetID,
-                                        unsigned int SymbolID) {
-  auto result = AlignedBuffer(SymbolSize());
-  ReadSymbol(StripeID, ErasureSetID, SymbolID, result);
-  return result;
-}
-
-AlignedBuffer& CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
-                                         unsigned int ErasureSetID,
-                                         unsigned int SymbolID,
-                                         AlignedBuffer& out) {
+bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
+                               unsigned int ErasureSetID,
+                               unsigned int SymbolID,
+                               AlignedBuffer& out) {
   assert(out.size() == SymbolSize());
-  auto ok = ReadSymbol(StripeID, ErasureSetID, SymbolID, out.data());
-  if (!ok) {
-    throw std::runtime_error("Error reading data");
-  }
-  return out;
+  return ReadSymbol(StripeID, ErasureSetID, SymbolID, out.data());
 }
 
 bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
@@ -80,6 +76,8 @@ bool CRTPProcessor::DecodeDataSymbols(
     unsigned char* pDest,         /// destination array.
     size_t ThreadID               /// the ID of the calling thread
 ) {
+  assert(this->IsCorrectable(ErasureSetID));
+  assert(FirstSymbolID + Symbols2Decode <= m_Dimension);
   auto const LastSymbolID = FirstSymbolID + Symbols2Decode;
   auto const inRange = [FirstSymbolID, LastSymbolID](int s) -> bool {
     if (s < 0) {
@@ -103,8 +101,54 @@ bool CRTPProcessor::DecodeDataSymbols(
     }
     return result;
   } else {
-    // TODO
-    return false;
+    bool ok = true;
+    auto const symbolSize = SymbolSize();
+    auto symbols = std::vector<AlignedBuffer>();
+    for (std::size_t s = 0; s < p; ++s) {
+      if (IsErased(ErasureSetID, s)) {
+        symbols.emplace_back(symbolSize, true);
+      } else {
+        auto symbol = AlignedBuffer(symbolSize, false);
+        ok &= ReadSymbol(StripeID, ErasureSetID, s, symbol.data());
+        symbols.push_back(std::move(symbol));
+      }
+    }
+
+    auto const NumErasedRaid4Symbols = GetNumErasedRaid4Symbols(ErasureSetID);
+    bool diag_is_anti;
+    if (NumErasedRaid4Symbols > 1) {
+      auto diag = AlignedBuffer(symbolSize, false);
+      diag_is_anti = IsErased(ErasureSetID, p);
+      if (diag_is_anti) {
+        assert(!IsErased(ErasureSetID, p + 1));
+      }
+      ok &= ReadSymbol(StripeID, ErasureSetID, diag_is_anti ? p + 1 : p, diag.data());
+      symbols.push_back(std::move(diag));
+    }
+
+    switch (NumErasedRaid4Symbols) {
+      case 3:
+        TODO("RTP");
+        [[fallthrough]];
+      case 2:
+        TODO("RDP");
+        break;
+      default:
+        assert(NumErasedRaid4Symbols == 1);
+        for (std::size_t s = 0; s < p; ++s) {
+          if (s != X) {
+            symbols[X] ^= symbols[s];
+          }
+        }
+        break;
+    }
+
+    for (auto symbolId = FirstSymbolID; symbolId < LastSymbolID; symbolId++) {
+      memcpy(pDest, symbols[symbolId].data(), symbolSize);
+      pDest += symbolSize;
+    }
+
+    return ok;
   }
 }
 
@@ -115,12 +159,12 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
                                          unsigned int Subsymbols2Decode,
                                          unsigned char* pDest,
                                          size_t ThreadID) {
+  assert(SymbolID < m_Dimension);
   // If the symbol is OK, just read from it.
   if (!IsErased(ErasureSetID, SymbolID)) {
     return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, SubsymbolID, Subsymbols2Decode, pDest);
   }
-  auto const NumErasedRAID4Symbols =
-      GetNumOfErasures(ErasureSetID) - IsErased(ErasureSetID, p) - IsErased(ErasureSetID, p + 1);
+  auto const NumErasedRAID4Symbols = GetNumErasedRaid4Symbols(ErasureSetID);
 
   if (SymbolID < p) {
     // We have a RAID4 disk...
@@ -150,7 +194,7 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
     }
   }
 
-  // No luck, we have to do
+  // No luck, we have to restore the entire symbol
   auto symbol = AlignedBuffer(SymbolSize());
   auto const ok = DecodeDataSymbols(StripeID, ErasureSetID, SymbolID, 1, symbol.data(), ThreadID);
   if (!ok) {
@@ -159,6 +203,10 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
   memcpy(pDest, symbol.data() + SubsymbolID * m_StripeUnitSize,
          Subsymbols2Decode * m_StripeUnitSize);
   return true;
+}
+
+unsigned int CRTPProcessor::GetNumErasedRaid4Symbols(unsigned int ErasureSetID) const {
+  return GetNumOfErasures(ErasureSetID) - IsErased(ErasureSetID, p) - IsErased(ErasureSetID, p + 1);
 }
 
 /// encode and write the whole CRAIDProcessorstripe
@@ -220,7 +268,11 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
   auto buffer = AlignedBuffer(symbol_size);
   auto read_symbol = [this, StripeID, ErasureSetID,
                       &buffer](std::size_t symbolId) -> AlignedBuffer const& {
-    return ReadSymbol(StripeID, ErasureSetID, symbolId, buffer);
+    auto ok = ReadSymbol(StripeID, ErasureSetID, symbolId, buffer);
+    if (!ok) {
+      throw std::runtime_error("Error reading data");
+    }
+    return buffer;
   };
   auto row = AlignedBuffer(symbol_size, true);
   auto diag = AlignedBuffer(symbol_size, true);
