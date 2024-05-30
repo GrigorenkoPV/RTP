@@ -8,12 +8,13 @@
  * Author: P. Trifonov petert@dcn.ftk.spbstu.ru
  * ********************************************************/
 
-#include <iostream>
-#include <string.h>
-#include <stdio.h>
 #include <fcntl.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include <time.h>
+#include <iostream>
+#include <memory>
 
 #ifdef WIN32
 #include <process.h>
@@ -58,7 +59,7 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
     unsigned StripeUnitSize = A.GetStripeUnitSize();
     unsigned long long SizeInUnits = Size / StripeUnitSize;
 
-	if (BlocksPerRequest) 
+	if (BlocksPerRequest)
 		CounterSize = (CounterSize/BlocksPerRequest/StripeUnitSize)*BlocksPerRequest*StripeUnitSize;
 
     if (!A.Mount(true))
@@ -173,7 +174,7 @@ struct FileHeader
 {
     ///file size
     off64_t Size;
-    ///CRC32 checksum 
+    ///CRC32 checksum
     unsigned CRC32;
     ///header checksum
     off64_t Checksum;
@@ -197,8 +198,8 @@ int StoreFile(CDiskArray& A, ///the array to be used
     };
     off64_t FileSize = lseek64(File, 0, SEEK_END);
     lseek64(File, 0, SEEK_SET);
-    unsigned char* pData = new unsigned char[FileSize];
-    if (read(File, pData, (unsigned) FileSize) != FileSize)
+    auto pData = std::make_unique<unsigned char[]>(FileSize);
+    if (read(File, pData.get(), (unsigned) FileSize) != FileSize)
     {
         cerr << "Failed to read data from " << pFilename;
         return 3;
@@ -208,7 +209,7 @@ int StoreFile(CDiskArray& A, ///the array to be used
     Header.Size = FileSize;
     InitCRC32();
     Header.CRC32 = 0;
-    UpdateCRC32(Header.CRC32, FileSize, pData);
+    UpdateCRC32(Header.CRC32, FileSize, pData.get());
     Header.Checksum = Header.Size^Header.CRC32;
 
 
@@ -221,13 +222,12 @@ int StoreFile(CDiskArray& A, ///the array to be used
     double StartTime,StopTime,Dummy;
     GetTimes(StartTime,Dummy,Dummy);
 
-    if (A.write(F, FileSize, pData) != FileSize)
+    if (A.write(F, FileSize, pData.get()) != FileSize)
     {
         cerr << "Failed to store data on the array\n";
         return 3;
     };
     GetTimes(StopTime,Dummy,Dummy);
-    delete[]pData;
     cerr << "File stored successfully\n";
 #ifdef OPERATION_COUNTING
     cout<<"Operations per byte: ";
@@ -262,11 +262,11 @@ int ReadFile(CDiskArray& A, ///the array to be used
         return 3;
     };
 
-    unsigned char* pData = new unsigned char[Header.Size];
-    
+    auto pData = std::make_unique<unsigned char[]>(Header.Size);
+
     double StartTime,StopTime,Dummy;
     GetTimes(StartTime,Dummy,Dummy);
-    if (A.read(F, Header.Size, (unsigned char*) pData) != Header.Size)
+    if (A.read(F, Header.Size, pData.get()) != Header.Size)
     {
         cerr << "Failed to read file data from the array\n";
         return 3;
@@ -274,7 +274,7 @@ int ReadFile(CDiskArray& A, ///the array to be used
     GetTimes(StopTime,Dummy,Dummy);
     InitCRC32();
     unsigned CRC32 = 0;
-    UpdateCRC32(CRC32, Header.Size, pData);
+    UpdateCRC32(CRC32, Header.Size, pData.get());
     if (CRC32 != Header.CRC32)
     {
         cerr << "File checksum mismatch\n";
@@ -286,12 +286,11 @@ int ReadFile(CDiskArray& A, ///the array to be used
         cerr << "Error opening file " << pFilename << endl;
         return 3;
     };
-    if (write(File, pData, (unsigned) Header.Size) != Header.Size)
+    if (write(File, pData.get(), (unsigned) Header.Size) != Header.Size)
     {
         cerr << "Failed to read data from " << pFilename;
         return 3;
     };
-    delete[]pData;
     cerr << "File extracted successfully\n";
 #ifdef OPERATION_COUNTING
     cout<<"Operations per byte: ";
@@ -361,7 +360,7 @@ unsigned long long Rand(unsigned long long & RNGState)
 bool BenchmarkDone = false;
 
 /**Generates a mixture of read and write requests in linear of random order.
- * Passes back the measurement results 
+ * Passes back the measurement results
  */
 #ifdef WIN32
 unsigned __stdcall
@@ -382,7 +381,7 @@ void*
     //the threshold used to generate random read/write process
     double RWThreshold = pow(2.0, 64) * D.WriteRatio;
     //generate the random data to be read/written
-    unsigned char* pData = new unsigned char[D.BlockSize];
+    auto pData = std::make_unique<unsigned char[]>(D.BlockSize);
     for (unsigned i = 0; i < D.BlockSize; i++)
     {
 		pData[i] = (unsigned char) Rand(RNGState);
@@ -400,13 +399,13 @@ void*
                 D.pArray->seek(F, Offset, SEEK_SET);
             if (Rand(RNGState) < RWThreshold)
             {
-                //write 
-                D.pArray->write(F, D.BlockSize, pData);
+                //write
+                D.pArray->write(F, D.BlockSize, pData.get());
                 D.BytesWritten += D.BlockSize;
             }
             else
             {
-                D.pArray->read(F, D.BlockSize, pData);
+                D.pArray->read(F, D.BlockSize, pData.get());
                 D.BytesRead += D.BlockSize;
             };
             D.IOCount++;
@@ -426,17 +425,17 @@ void*
             D.pArray->seek(F, Offset, SEEK_SET);
             while (F <(long long) Capacity)
             {
-               
+
                 if (Rand(RNGState) < RWThreshold)
                 {
-                    //write 
-                    D.pArray->write(F, D.BlockSize, pData);
+                    //write
+                    D.pArray->write(F, D.BlockSize, pData.get());
                     D.BytesWritten += D.BlockSize;
                 }
                 else
                 {
                     //read
-                    D.pArray->read(F, D.BlockSize, pData);
+                    D.pArray->read(F, D.BlockSize, pData.get());
                     D.BytesRead += D.BlockSize;
                 };
                 D.IOCount++;
@@ -444,7 +443,6 @@ void*
             };
         };
     };
-    delete[]pData;
 	return 0;
 };
 
@@ -472,15 +470,15 @@ int Benchmark(CDiskArray& A, ///the array to be benchmarked
     };
     cout<<"Running "<<((Random)?"random ":"linear ")<<((Aligned)?" aligned":"non-aligned")<<" I/O benchmark with "
         <<ThreadCount<<" threads,  block size "<<BlockSize<<" and write ratio "<<WriteRatio<<endl;
-    
-    BenchmarkData* pData = new BenchmarkData[ThreadCount];
+
+    auto pData = std::make_unique<BenchmarkData[]>(ThreadCount);
 #ifdef WIN32
-	HANDLE* Threads = new HANDLE[ThreadCount];
+    auto Threads =  std::make_unique<HANDLE[]>(ThreadCount);
 #else
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    pthread_t* Threads = new pthread_t[ThreadCount];
+    auto Threads =  std::make_unique<pthread_t[]>(ThreadCount);
 #endif
     double StartTimeU,StartTimeS,StartTimeW;
     GetTimes(StartTimeU,StartTimeS,StartTimeW);
@@ -494,9 +492,9 @@ int Benchmark(CDiskArray& A, ///the array to be benchmarked
         pData[i].ThreadID=i;
         //spawn a benchmarking thread
 #ifdef WIN32
-		Threads[i]=(HANDLE) _beginthreadex(NULL,0,BenchThread,pData+i,0,0);
+		Threads[i]=(HANDLE) _beginthreadex(NULL,0,BenchThread,&pData[i],0,0);
 #else
-        pthread_create(Threads + i, &attr, BenchThread, pData + i);
+        pthread_create(&Threads[i], &attr, BenchThread, &pData[i]);
 #endif
 
     };
@@ -536,7 +534,5 @@ int Benchmark(CDiskArray& A, ///the array to be benchmarked
         <<"Write throughput (bytes/s): "<<BytesWritten/TimeSpentU<<'\t'<<BytesWritten/TimeSpentT<<'\t'<<BytesWritten/TimeSpentW<<'\n'
         <<"I/O operations per second: "<<IOCount/TimeSpentU<<'\t'<<IOCount/TimeSpentT<<'\t'<<IOCount/TimeSpentW<<endl;
 
-    delete[]Threads;
-    delete[]pData;
     return 0;
 }

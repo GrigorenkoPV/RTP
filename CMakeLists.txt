@@ -35,3 +35,8 @@ add_executable(testbed
         confuse/lexer.c
         RAID/RTP.cpp
 )
+
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(testbed PUBLIC "-fsanitize=undefined,address")
+    target_link_options(testbed PUBLIC "-fsanitize=undefined,address")
+endif ()
