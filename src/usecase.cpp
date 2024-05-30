@@ -280,7 +280,7 @@ int ReadFile(CDiskArray& A, ///the array to be used
         cerr << "File checksum mismatch\n";
         return 3;
     };
-    int File = open(pFilename, O_RDWR | O_CREAT|FILE_IO_OPTIONS);
+    int File = open(pFilename, O_RDWR | O_CREAT | FILE_IO_OPTIONS, OPEN_FLAGS);
     if (File < 0)
     {
         cerr << "Error opening file " << pFilename << endl;
