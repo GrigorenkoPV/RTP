@@ -14,7 +14,9 @@ endif ()
 
 
 add_compile_options(-mavx)
-add_compile_options(-O3 -finline)
+if (NOT (CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    add_compile_options(-O3 -finline)
+endif ()
 
 include_directories(./Include ./confuse)
 
