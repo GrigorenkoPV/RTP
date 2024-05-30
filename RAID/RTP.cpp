@@ -1,13 +1,14 @@
 #include "RTP.h"
+#include <algorithm>
 #include <cassert>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-using namespace std::string_literals;
-
-#define TODO(msg) \
-  throw std::runtime_error(""s + __FILE__ + ":" + std::to_string(__LINE__) + " TODO: " + msg);
+#define TODO(msg)                                                                   \
+  throw std::runtime_error(std::string(__FILE__) + ":" + std::to_string(__LINE__) + \
+                           " TODO: " + msg);
 
 namespace {
 bool isPrime(unsigned n) {
@@ -29,6 +30,16 @@ bool isPrime(unsigned n) {
       }
       return true;
   }
+}
+
+template <typename T>
+auto iota(T from, T to) {
+  return std::views::iota(from, to);
+}
+
+template <typename T>
+auto iota(T to) {
+  return iota(static_cast<T>(0), to);
 }
 }  // namespace
 
@@ -78,8 +89,9 @@ bool CRTPProcessor::DecodeDataSymbols(
 ) {
   assert(this->IsCorrectable(ErasureSetID));
   assert(FirstSymbolID + Symbols2Decode <= m_Dimension);
+  auto const symbolSize = SymbolSize();
   auto const LastSymbolID = FirstSymbolID + Symbols2Decode;
-  auto const inRange = [FirstSymbolID, LastSymbolID](int s) -> bool {
+  auto const wasRequested = [FirstSymbolID, LastSymbolID](int s) -> bool {
     if (s < 0) {
       return false;
     } else {
@@ -87,63 +99,104 @@ bool CRTPProcessor::DecodeDataSymbols(
       return FirstSymbolID <= symbolId && symbolId < LastSymbolID;
     }
   };
-  auto const X = GetErasedPosition(ErasureSetID, 0);
-  auto const Y = GetErasedPosition(ErasureSetID, 1);
-  auto const Z = GetErasedPosition(ErasureSetID, 2);
+  auto const [X, Y, Z] = GetErasedSymbols(ErasureSetID);
   auto const is_ordered = [](int a, int b) -> bool { return b < 0 || (0 <= a && a < b); };
   assert(is_ordered(X, Y) && is_ordered(Y, Z));
-  if (!inRange(X) && !inRange(Y) && !inRange(Z)) {
-    // All the symbols are intact, read as is.
+  if (!wasRequested(X) && !wasRequested(Y) && !wasRequested(Z)) {
+    // All the symbols that we need are intact, read as is.
     auto result = true;
-    for (auto symbolId = FirstSymbolID; symbolId < LastSymbolID; symbolId++) {
+    for (unsigned const symbolId : iota(FirstSymbolID, LastSymbolID)) {
       result &= ReadSymbol(StripeID, ErasureSetID, symbolId,
-                           pDest + (symbolId - FirstSymbolID) * SymbolSize());
+                           pDest + (symbolId - FirstSymbolID) * symbolSize);
     }
     return result;
   } else {
+    auto const NumErasedRaid4Symbols = GetNumErasedRaid4Symbols(ErasureSetID);
+
     bool ok = true;
-    auto const symbolSize = SymbolSize();
+
     auto symbols = std::vector<AlignedBuffer>();
-    for (std::size_t s = 0; s < p; ++s) {
+    symbols.reserve(p);
+
+    bool const needDiag = NumErasedRaid4Symbols > 1;
+    auto diag = AlignedBuffer();
+    bool isAnti;
+    if (needDiag) {
+      isAnti = IsErased(ErasureSetID, p);
+      if (isAnti) {
+        assert(!IsErased(ErasureSetID, p + 1));
+      }
+      diag = AlignedBuffer(symbolSize);
+      ok &= ReadSymbol(StripeID, ErasureSetID, isAnti ? p + 1 : p, diag.data());
+    }
+
+    for (std::size_t const s : iota(p)) {
       if (IsErased(ErasureSetID, s)) {
         symbols.emplace_back(symbolSize, true);
       } else {
         auto symbol = AlignedBuffer(symbolSize, false);
         ok &= ReadSymbol(StripeID, ErasureSetID, s, symbol.data());
+        if (needDiag) {
+          AddToDiag(diag, isAnti, s, symbol);
+        }
         symbols.push_back(std::move(symbol));
       }
     }
 
-    auto const NumErasedRaid4Symbols = GetNumErasedRaid4Symbols(ErasureSetID);
-    bool isAnti;
-    if (NumErasedRaid4Symbols > 1) {
-      auto diag = AlignedBuffer(symbolSize, false);
-      isAnti = IsErased(ErasureSetID, p);
-      if (isAnti) {
-        assert(!IsErased(ErasureSetID, p + 1));
-      }
-      ok &= ReadSymbol(StripeID, ErasureSetID, isAnti ? p + 1 : p, diag.data());
-      symbols.push_back(std::move(diag));
-    }
-
     switch (NumErasedRaid4Symbols) {
-      case 3: {
+      case 3: {  // RTP
         TODO("RTP");
       }
         [[fallthrough]];
-      case 2: {
+      case 2: {  // RDP
         auto r = p - 1;
-        for (std::size_t i = 0; i < p - 1; ++i) {
+        for (unsigned const _ : iota(p - 1)) {
           auto const d = DiagNum(isAnti, Y, r);
-          r = (p + d - X) % p;
-          assert(r < m_Dimension);
-          TODO("A[r, X] := DIAGSUM(d) ^ diag[d]");
-          TODO("A[r, Y] := ROWSUM(r)");
+          if (r != p - 1 && d != p - 1) {
+            // Update the diagonal checksum after restoring Y[r] on the previous iteration
+            XOR(diag.data() + d * m_StripeUnitSize, symbols[Y].data() + r * m_StripeUnitSize,
+                m_StripeUnitSize);
+          }
+          r = (p + d - X) % p;  // TODO: this should take isAnti in consideration
+          assert(DiagNum(isAnti, X, r) == d);
+          assert(r < m_StripeUnitsPerSymbol);
+          // Restore X[r] using a diagonal sum
+          {
+            auto const ax = symbols[X].data() + r * m_StripeUnitSize;
+            if (d != m_StripeUnitsPerSymbol) {
+              // ax is zeroed at this point, so we can memcpy instead of XORing
+              assert(d < m_StripeUnitsPerSymbol);
+              auto const diag_sum = diag.data() + d * m_StripeUnitSize;
+              memcpy(ax, diag_sum, m_StripeUnitSize);
+              // We don't actually need to update the diagonal sum,
+              // because we aren't going to read it again.
+              // But if we had to, we could just zero it, because at this point the
+              // diagonal d should be completely restored.
+              // memset(diag_sum, 0, m_StripeUnitSize);
+            } else {
+              // This is a diag that we didn't store.
+              // We can recompute it as a XOR of all other diagonal subsymbols.
+              for (unsigned const i : iota(m_StripeUnitsPerSymbol)) {
+                XOR(ax, diag.data() + i * m_StripeUnitSize, m_StripeUnitSize);
+              }
+            }
+          }
+          // Restore Y's row r with a row sum
+          {
+            auto const ay = symbols[Y].data() + r * m_StripeUnitSize;
+            for (std::size_t const s : iota(p)) {
+              if (s != Y) {
+                auto const as = symbols[s].data() + r * m_StripeUnitSize;
+                XOR(ay, as, m_StripeUnitSize);
+              }
+            }
+            // We will update the diagonal checksum at the start of the next iteration.
+          }
         }
       } break;
-      default: {
+      default: {  // RAID4
         assert(NumErasedRaid4Symbols == 1);
-        for (std::size_t s = 0; s < p; ++s) {
+        for (std::size_t const s : iota(p)) {
           if (s != X) {
             symbols[X] ^= symbols[s];
           }
@@ -151,7 +204,7 @@ bool CRTPProcessor::DecodeDataSymbols(
       } break;
     }
 
-    for (auto symbolId = FirstSymbolID; symbolId < LastSymbolID; symbolId++) {
+    for (unsigned const symbolId : iota(FirstSymbolID, LastSymbolID)) {
       memcpy(pDest, symbols[symbolId].data(), symbolSize);
       pDest += symbolSize;
     }
@@ -182,7 +235,7 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
       auto read_buf = AlignedBuffer(size);
       auto xor_buf = AlignedBuffer(size, true);
       auto ok = true;
-      for (std::size_t s = 0; s < p; ++s) {
+      for (std::size_t const s : iota(p)) {
         if (s == SymbolID) {
           continue;
         }
@@ -217,6 +270,21 @@ unsigned int CRTPProcessor::GetNumErasedRaid4Symbols(unsigned int ErasureSetID) 
   return GetNumOfErasures(ErasureSetID) - IsErased(ErasureSetID, p) - IsErased(ErasureSetID, p + 1);
 }
 
+std::array<int, 3> CRTPProcessor::GetErasedSymbols(unsigned int ErasureSetID) const {
+  auto result = std::array{GetErasedPosition(ErasureSetID, 0), GetErasedPosition(ErasureSetID, 1),
+                           GetErasedPosition(ErasureSetID, 2)};
+  auto const n = GetNumOfErasures(ErasureSetID);
+  for (unsigned const i : iota(3)) {
+    if (i < n) {
+      assert(result[i] >= 0);
+    } else {
+      assert(result[i] == -1);
+    }
+  }
+  std::sort(result.begin(), result.begin() + n);
+  return result;
+}
+
 /// encode and write the whole CRAIDProcessorstripe
 ///@return true on success
 bool CRTPProcessor::EncodeStripe(unsigned long long StripeID,  /// the stripe to be encoded
@@ -236,7 +304,7 @@ bool CRTPProcessor::EncodeStripe(unsigned long long StripeID,  /// the stripe to
   auto row = AlignedBuffer(symbol_size, true);
   auto diag = AlignedBuffer(symbol_size, true);
   auto adiag = AlignedBuffer(symbol_size, true);
-  for (std::size_t symbolId = 0; symbolId < m_Dimension; ++symbolId) {
+  for (std::size_t const symbolId : iota(m_Dimension)) {
     memcpy(buffer.data(), pData + symbolId * symbol_size, symbol_size);
     auto const& symbol = buffer;
     write_symbol(symbolId, symbol);
@@ -285,7 +353,8 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
   auto row = AlignedBuffer(symbol_size, true);
   auto diag = AlignedBuffer(symbol_size, true);
   auto adiag = AlignedBuffer(symbol_size, true);
-  for (std::size_t symbolId = 0; symbolId < p; ++symbolId) {
+
+  for (std::size_t const symbolId : iota(p)) {
     auto const& symbol = read_symbol(symbolId);
     row ^= symbol;
     AddToDiags(diag, adiag, symbolId, symbol);

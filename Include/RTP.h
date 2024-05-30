@@ -107,7 +107,7 @@ class CRTPProcessor : public CRAIDProcessor {
                                            std::size_t symbolId,
                                            std::size_t subsymbolId) const noexcept {
     if (isAnti) {
-      return (p + symbolId - subsymbolId) % p;
+      return (p + symbolId - subsymbolId - 1) % p;
     } else {
       return (symbolId + subsymbolId) % p;
     }
@@ -136,4 +136,5 @@ class CRTPProcessor : public CRAIDProcessor {
   }
 
   [[nodiscard]] unsigned int GetNumErasedRaid4Symbols(unsigned int ErasureSetID) const;
+  [[nodiscard]] std::array<int, 3> GetErasedSymbols(unsigned int ErasureSetID) const;
 };
