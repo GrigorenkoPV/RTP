@@ -8,9 +8,11 @@
 * Author: P. Trifonov petert@dcn.ftk.spbstu.ru
 * ********************************************************/
 
-#include <stdlib.h>
+#include <cstdlib>
 #include <algorithm>
-#include <string.h>
+#include <cstring>
+#include <cstdint>
+#include <cassert>
 #include <emmintrin.h>
 #include <immintrin.h>
 #include "arithmetic.h"
@@ -44,12 +46,20 @@ void AlignedFree ( void* ptr )
 #endif
 };
 
-
+namespace {
+[[nodiscard]] bool isAligned(unsigned char const* p) noexcept {
+  return reinterpret_cast<uintptr_t>(p) % ARITHMETIC_ALIGNMENT == 0;
+}
+}  // namespace
 
 /**XOR arrays A and B, storing the result in A
 Depending on alignment of the arrays, different implementations are used*/
 void XOR ( unsigned char* pA,const unsigned char* pB,unsigned Size )
 {
+  assert(Size % ARITHMETIC_ALIGNMENT == 0);
+  assert(isAligned(pA));
+  assert(isAligned(pB));
+
     LOCKEDADD(opXOR,Size);
 #ifdef AVX
     for ( unsigned i=0;i<Size;i+=32 )
@@ -106,6 +116,10 @@ void XOR ( unsigned char* pA,const unsigned char* pB,unsigned Size )
 Depending on alignment of the arrays, different implementations are used*/
 void XOR (const unsigned char* pA,const unsigned char* pB,unsigned char* pC,unsigned Size )
 {
+  assert(Size % ARITHMETIC_ALIGNMENT == 0);
+  assert(isAligned(pA));
+  assert(isAligned(pB));
+  assert(isAligned(pC));
 
     LOCKEDADD(opXOR,Size);
 #ifdef AVX
@@ -218,6 +232,11 @@ void XOR (const unsigned char* pA,const unsigned char* pB,unsigned char* pC,unsi
 Everything must be aligned*/
 void XOR (const unsigned char* pA,const unsigned char* pB,const unsigned char* pC,unsigned char* pD,unsigned Size )
 {
+  assert(Size % ARITHMETIC_ALIGNMENT == 0);
+  assert(isAligned(pA));
+  assert(isAligned(pB));
+  assert(isAligned(pC));
+  assert(isAligned(pD));
 
     LOCKEDADD(opXOR,2*Size);
      for ( unsigned i=0;i<Size;i+=16 )
@@ -233,6 +252,10 @@ void XOR (const unsigned char* pA,const unsigned char* pB,const unsigned char* p
 Everything must be aligned*/
 void XORXOR (const unsigned char* pA,const unsigned char* pB,unsigned char* pC,unsigned Size )
 {
+  assert(Size % ARITHMETIC_ALIGNMENT == 0);
+  assert(isAligned(pA));
+  assert(isAligned(pB));
+  assert(isAligned(pC));
 
     LOCKEDADD(opXOR,2*Size);
 #ifdef AVX
