@@ -117,12 +117,13 @@ class CRTPProcessor : public CRAIDProcessor {
                         bool isAnti,
                         std::size_t symbolId,
                         AlignedBuffer const& symbol) const {
+    assert(diag.size() == SymbolSize() || diag.size() == SymbolSize() + m_StripeUnitSize);
     for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
       auto const d = DiagNum(isAnti, symbolId, subsymbolID);
-      if (d < m_StripeUnitsPerSymbol) {
-        XOR(&diag[d * m_StripeUnitSize], &symbol[subsymbolID * m_StripeUnitSize], m_StripeUnitSize);
-      } else {
-        assert(d == m_StripeUnitsPerSymbol);
+      assert(d <= m_StripeUnitsPerSymbol);
+      auto const offset = d * m_StripeUnitSize;
+      if (offset < diag.size()) {
+        XOR(&diag[offset], &symbol[subsymbolID * m_StripeUnitSize], m_StripeUnitSize);
       }
     }
   }
