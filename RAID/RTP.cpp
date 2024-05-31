@@ -272,6 +272,7 @@ bool CRTPProcessor::DecodeDataSymbols(
       }
 
       std::memcpy(symbols[Y].data(), rhs.data(), symbolSize);
+      AddToDiag(diag, isAnti, Y, symbols[Y]);
       // We're about to do RDP, and it's going to restore X and Y.
       // We've just restored Y ourselves though.
       // So let's swap Y & Z and pretend we've restored Z instead.

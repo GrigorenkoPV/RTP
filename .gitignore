@@ -6,5 +6,5 @@ build*/
 
 *.pdf
 
-/in.bmp
-/out.bmp
+/in.*
+/out.*
