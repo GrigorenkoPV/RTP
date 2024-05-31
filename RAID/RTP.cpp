@@ -93,7 +93,7 @@ bool CRTPProcessor::DecodeDataSymbols(
   auto const symbolSize = SymbolSize();
   auto const LastSymbolID = FirstSymbolID + Symbols2Decode;
 
-  auto const [X, Y, Z] = GetErasedSymbols(ErasureSetID);
+  auto [X, Y, Z] = GetErasedSymbols(ErasureSetID);
   {
     [[maybe_unused]] auto const is_ordered = [](int a, int b) -> bool {
       return b < 0 || (0 <= a && a < b);
@@ -161,7 +161,7 @@ bool CRTPProcessor::DecodeDataSymbols(
       assert(!isAnti);
 
       auto adiag = AlignedBuffer(symbolSize + m_StripeUnitSize, false);
-      {  // Prepare anti-diag
+      {
         // Read the p-1 stored subsymbols
         ok &= ReadSymbol(StripeID, ErasureSetID, p + 1, adiag);
 
@@ -172,23 +172,54 @@ bool CRTPProcessor::DecodeDataSymbols(
             XOR(missing, adiag.data() + i * m_StripeUnitSize, m_StripeUnitSize);
           }
         }
+      }
 
-        {  // Add the RAID4 symbols
-          for (std::size_t const s : iota(p)) {
-            [[maybe_unused]] auto const& symbol = symbols[s];
-            if (IsErased(ErasureSetID, s)) {
-              assert(symbol.isZero());
-            } else {
-              AddToDiag(adiag, true, s, symbol);
-            }
+      auto row = AlignedBuffer(symbolSize + m_StripeUnitSize, true);
+      {  // Add the RAID4 symbols to anti-diag & row
+        for (std::size_t const s : iota(p)) {
+          [[maybe_unused]] auto const& symbol = symbols[s];
+          if (IsErased(ErasureSetID, s)) {
+            assert(symbol.isZero());
+          } else {
+            row ^= symbol;
+            AddToDiag(adiag, true, s, symbol);
           }
         }
       }
 
-      TODO("RTP: linear equations");
+      auto lhs = std::vector(p, std::vector(p, false));
+      auto rhs = row.clone();
+
+      assert(X < Y && Y < Z);
+      for (unsigned const k : iota(p)) {
+        {  // LHS
+          for (unsigned const i : {
+                   k,
+                   k + Z - Y,
+                   k + Y - X,
+                   k + Z - X,
+               }) {
+            lhs[k][i % p] = true;
+          }
+        }
+        {  // RHS
+          TODO("RHS");
+        }
+      }
+
+      {  // Linear equations
+        TODO("RTP: solve linear equations");
+      }
+
+      symbols[Y] = std::move(rhs);
+      // We're about to do RDP, and it's going to restore X and Y.
+      // We've just restored Y ourselves though.
+      // So let's swap Y & Z and pretend we've restored Z instead.
+      std::swap(Y, Z);
     }
       [[fallthrough]];
     case 2: {  // RDP
+      assert(X != Y);
       auto r = p - 1;
       for (unsigned const _ : iota(p - 1)) {
         auto const d = DiagNum(isAnti, Y, r);

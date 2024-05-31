@@ -70,6 +70,10 @@ class AlignedBuffer {
     if (a.size_ != b.size_) {
       return false;
     }
+    if (a.data() == b.data()) {
+      assert(std::addressof(a) == std::addressof(b));
+      return true;
+    }
     for (std::size_t i = 0; i < a.size_; ++i) {
       if (a[i] != b[i]) {
         return false;
@@ -84,8 +88,19 @@ class AlignedBuffer {
   }
 
   inline AlignedBuffer& operator^=(AlignedBuffer const& other) & {
-    assert(this->size() == other.size());
-    XOR(this->data(), other.data(), this->size());
+    assert(this->size() >= other.size());
+    if (this == std::addressof(other)) {
+      memset(this->data(), 0, this->size());
+    } else {
+      XOR(this->data(), other.data(), other.size());
+    }
     return *this;
+  }
+
+  // Not a copy constructor just to be explicit.
+  [[nodiscard]] inline AlignedBuffer clone() const& {
+    auto result = AlignedBuffer(this->size(), false);
+    memcpy(result.data(), this->data(), this->size());
+    return result;
   }
 };
