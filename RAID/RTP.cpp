@@ -270,6 +270,12 @@ bool CRTPProcessor::DecodeDataSymbols(
           }
         }
       }
+      for ([[maybe_unused]] auto const b : lhs.back()) {
+        assert(!b);
+      }
+      for ([[maybe_unused]] unsigned const i : iota(m_StripeUnitSize)) {
+        assert(rhs[symbolSize + i] == 0);
+      }
 
       std::memcpy(symbols[Y].data(), rhs.data(), symbolSize);
       AddToDiag(diag, isAnti, Y, symbols[Y]);
@@ -278,9 +284,13 @@ bool CRTPProcessor::DecodeDataSymbols(
       // So let's swap Y & Z and pretend we've restored Z instead.
       std::swap(Y, Z);
     }
-      [[fallthrough]];
+      if (!wasRequested(X) && !wasRequested(Y)) {
+        break;
+      } else {
+        [[fallthrough]];
+      }
     case 2: {  // RDP
-      assert(X != Y);
+      assert(X < Y);
       auto r = p - 1;
       for (unsigned const _ : iota(p - 1)) {
         auto const d = DiagNum(isAnti, Y, r);
@@ -472,6 +482,7 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
                                   unsigned ErasureSetID,  /// identifies the load balancing offset
                                   size_t ThreadID         /// identifies the calling thread
 ) {
+  // TODO: it is actually possible to do *some* verification if at most 1 RAID4 symbol is erased
   if (GetNumOfErasures(ErasureSetID)) {
     return true;
   }
