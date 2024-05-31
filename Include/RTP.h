@@ -107,7 +107,7 @@ class CRTPProcessor : public CRAIDProcessor {
                                            std::size_t symbolId,
                                            std::size_t subsymbolId) const noexcept {
     if (isAnti) {
-      return (p + symbolId - subsymbolId - 1) % p;
+      return (p + symbolId - subsymbolId) % p;
     } else {
       return (symbolId + subsymbolId) % p;
     }

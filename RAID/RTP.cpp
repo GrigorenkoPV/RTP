@@ -57,7 +57,7 @@ bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
                                unsigned int ErasureSetID,
                                unsigned int SymbolID,
                                AlignedBuffer& out) {
-  assert(out.size() == SymbolSize());
+  assert(out.size() >= SymbolSize());
   return ReadSymbol(StripeID, ErasureSetID, SymbolID, out.data());
 }
 
@@ -131,7 +131,7 @@ bool CRTPProcessor::DecodeDataSymbols(
     diag = AlignedBuffer(symbolSize + m_StripeUnitSize);
     auto const d = isAnti ? p + 1 : p;
     assert(!IsErased(ErasureSetID, d));
-    ok &= ReadSymbol(StripeID, ErasureSetID, d, diag.data());
+    ok &= ReadSymbol(StripeID, ErasureSetID, d, diag);
     auto const missing = &diag[symbolSize];
     memcpy(missing, diag.data(), m_StripeUnitSize);
     for (unsigned const i : iota(1u, m_StripeUnitsPerSymbol)) {
@@ -144,7 +144,7 @@ bool CRTPProcessor::DecodeDataSymbols(
       symbols.emplace_back(symbolSize, true);
     } else {
       auto symbol = AlignedBuffer(symbolSize, false);
-      ok &= ReadSymbol(StripeID, ErasureSetID, s, symbol.data());
+      ok &= ReadSymbol(StripeID, ErasureSetID, s, symbol);
       if (diag.data() != nullptr) {
         AddToDiag(diag, isAnti, s, symbol);
       }
@@ -155,7 +155,37 @@ bool CRTPProcessor::DecodeDataSymbols(
 
   switch (NumErasedRaid4Symbols) {
     case 3: {  // RTP
-      TODO("RTP");
+      assert(!IsErased(ErasureSetID, p));
+      assert(!IsErased(ErasureSetID, p + 1));
+      // diag is the non-anti diagonal
+      assert(!isAnti);
+
+      auto adiag = AlignedBuffer(symbolSize + m_StripeUnitSize, false);
+      {  // Prepare anti-diag
+        // Read the p-1 stored subsymbols
+        ok &= ReadSymbol(StripeID, ErasureSetID, p + 1, adiag);
+
+        {  // Restore the missing subsymbol using XOR
+          auto const missing = &adiag[symbolSize];
+          memcpy(missing, adiag.data(), m_StripeUnitSize);
+          for (unsigned const i : iota(1u, m_StripeUnitsPerSymbol)) {
+            XOR(missing, adiag.data() + i * m_StripeUnitSize, m_StripeUnitSize);
+          }
+        }
+
+        {  // Add the RAID4 symbols
+          for (std::size_t const s : iota(p)) {
+            [[maybe_unused]] auto const& symbol = symbols[s];
+            if (IsErased(ErasureSetID, s)) {
+              assert(symbol.isZero());
+            } else {
+              AddToDiag(adiag, true, s, symbol);
+            }
+          }
+        }
+      }
+
+      TODO("RTP: linear equations");
     }
       [[fallthrough]];
     case 2: {  // RDP
@@ -167,7 +197,7 @@ bool CRTPProcessor::DecodeDataSymbols(
           XOR(diag.data() + d * m_StripeUnitSize, symbols[Y].data() + r * m_StripeUnitSize,
               m_StripeUnitSize);
         }
-        r = (isAnti ? (d + X) : (p + d - X)) % p;
+        r = (isAnti ? (p + X - d) : (p + d - X)) % p;
         assert(DiagNum(isAnti, X, r) == d);
         assert(r < m_StripeUnitsPerSymbol);
         // Restore X[r] using a diagonal sum
