@@ -78,6 +78,13 @@ bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
                          symbol.data());
 }
 
+void operator^=(std::vector<bool>& lhs, std::vector<bool> const& rhs) {
+  assert(lhs.size() == rhs.size());
+  for (std::size_t const i : iota(lhs.size())) {
+    lhs[i] = lhs[i] ^ rhs[i];
+  }
+}
+
 /// decode a number of payload subsymbols from a given symbol
 ///@return true on success
 bool CRTPProcessor::DecodeDataSymbols(
@@ -208,7 +215,27 @@ bool CRTPProcessor::DecodeDataSymbols(
       }
 
       {  // Linear equations
-        TODO("RTP: solve linear equations");
+        for (unsigned const r : iota(p)) {
+          if (!lhs[r][r]) {
+            for (unsigned const other : iota(r + 1, p)) {
+              if (lhs[other][r]) {
+                assert(other != r);
+                std::swap(lhs[r], lhs[other]);
+                auto* a = &rhs[r * m_StripeUnitSize];
+                auto* b = &rhs[other * m_StripeUnitSize];
+                std::swap_ranges(a, a + m_StripeUnitSize, b);
+                break;
+              }
+            }
+          }
+          assert(lhs[r][r]);
+          for (unsigned const other : iota(p)) {
+            if (r != other && lhs[other][r]) {
+              lhs[other] ^= lhs[r];
+              XOR(&rhs[other * m_StripeUnitSize], &rhs[r * m_StripeUnitSize], m_StripeUnitSize);
+            }
+          }
+        }
       }
 
       symbols[Y] = std::move(rhs);
