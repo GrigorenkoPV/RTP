@@ -1,6 +1,8 @@
 #include "RTP.h"
 #include <algorithm>
 #include <cassert>
+#include <iomanip>
+#include <iostream>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -194,51 +196,82 @@ bool CRTPProcessor::DecodeDataSymbols(
         }
       }
 
-      auto lhs = std::vector(p, std::vector(p, false));
+      auto lhs = std::vector(p, std::vector(p - 1, false));
       auto rhs = row.clone();
 
       assert(X < Y && Y < Z);
       for (unsigned const k : iota(p)) {
         {  // LHS
-          for (unsigned const i : {
+          for (unsigned const c : {
                    k,
                    k + Z - Y,
                    k + Y - X,
                    k + Z - X,
                }) {
-            lhs[k][i % p] = true;
+            auto const i = c % p;
+            if (i != p - 1) {
+              lhs[k][i] = true;
+            }
           }
         }
         {  // RHS
-          TODO("RHS");
+          auto const d = DiagNum(false, Z, k);
+          auto const ad = DiagNum(true, X, k);
+          auto const q = (k + Z - X) % p;
+          assert(DiagNum(false, Z, k) == DiagNum(false, X, q));
+          auto pos = &rhs[k * m_StripeUnitSize];
+          XOR(pos, &diag[d * m_StripeUnitSize], m_StripeUnitSize);
+          XOR(pos, &adiag[ad * m_StripeUnitSize], m_StripeUnitSize);
+          XOR(pos, &row[q * m_StripeUnitSize], m_StripeUnitSize);
         }
       }
-
-      {  // Linear equations
+      auto const debug = [&lhs, &rhs, this]() {
+        return;
         for (unsigned const r : iota(p)) {
+          for (auto const& b : lhs[r]) {
+            std::cerr << b;
+          }
+          std::cerr << '\t';
+          for (unsigned const i : iota(m_StripeUnitSize)) {
+            std::cerr << std::hex << std::setfill('0') << std::setw(2)
+                      << (int)rhs[m_StripeUnitSize * r + i] << std::dec;
+          }
+          std::cerr << std::endl;
+        }
+        std::cerr << std::endl;
+      };
+
+      debug();
+      {  // Linear equations
+        for (unsigned const r : iota(p - 1)) {
           if (!lhs[r][r]) {
             for (unsigned const other : iota(r + 1, p)) {
               if (lhs[other][r]) {
+                //                std::cerr << "Swap " << r << " & " << other << std::endl;
                 assert(other != r);
                 std::swap(lhs[r], lhs[other]);
                 auto* a = &rhs[r * m_StripeUnitSize];
                 auto* b = &rhs[other * m_StripeUnitSize];
                 std::swap_ranges(a, a + m_StripeUnitSize, b);
+                debug();
                 break;
               }
             }
           }
+
           assert(lhs[r][r]);
           for (unsigned const other : iota(p)) {
             if (r != other && lhs[other][r]) {
+              //              std::cerr << other << " ^= " << r << std::endl;
               lhs[other] ^= lhs[r];
               XOR(&rhs[other * m_StripeUnitSize], &rhs[r * m_StripeUnitSize], m_StripeUnitSize);
+              debug();
             }
           }
         }
       }
 
-      symbols[Y] = std::move(rhs);
+      std::memcpy(symbols[Y].data(), rhs.data(), symbolSize);
       // We're about to do RDP, and it's going to restore X and Y.
       // We've just restored Y ourselves though.
       // So let's swap Y & Z and pretend we've restored Z instead.
