@@ -39,4 +39,7 @@ add_executable(testbed
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(testbed PUBLIC "-fsanitize=undefined,address")
     target_link_options(testbed PUBLIC "-fsanitize=undefined,address")
+    if (NOT (MSVC))
+        add_definitions("-D_GLIBCXX_DEBUG")
+    endif ()
 endif ()
