@@ -176,7 +176,7 @@ bool CRTPProcessor::DecodeDataSymbols(
 
         {  // Restore the missing subsymbol using XOR
           auto const missing = &adiag[symbolSize];
-          memcpy(missing, adiag.data(), m_StripeUnitSize);
+          memcpy(missing, adiag.data() + 0 * m_StripeUnitSize, m_StripeUnitSize);
           for (unsigned const i : iota(1u, m_StripeUnitsPerSymbol)) {
             XOR(missing, adiag.data() + i * m_StripeUnitSize, m_StripeUnitSize);
           }
@@ -184,47 +184,46 @@ bool CRTPProcessor::DecodeDataSymbols(
       }
 
       auto row = AlignedBuffer(symbolSize + m_StripeUnitSize, true);
-      {  // Add the RAID4 symbols to anti-diag & row
-        for (std::size_t const s : iota(p)) {
-          [[maybe_unused]] auto const& symbol = symbols[s];
-          if (IsErased(ErasureSetID, s)) {
-            assert(symbol.isZero());
-          } else {
-            row ^= symbol;
-            AddToDiag(adiag, true, s, symbol);
-          }
+
+      // Add the RAID4 symbols to anti-diag & row
+      for (std::size_t const s : iota(p)) {
+        [[maybe_unused]] auto const& symbol = symbols[s];
+        if (IsErased(ErasureSetID, s)) {
+          assert(symbol.isZero());
+        } else {
+          row ^= symbol;
+          AddToDiag(adiag, true, s, symbol);
         }
       }
 
       auto lhs = std::vector(p, std::vector(p - 1, false));
-      auto rhs = row.clone();
-
       assert(X < Y && Y < Z);
       for (unsigned const k : iota(p)) {
-        {  // LHS
-          for (unsigned const c : {
-                   k,
-                   k + Z - Y,
-                   k + Y - X,
-                   k + Z - X,
-               }) {
-            auto const i = c % p;
-            if (i != p - 1) {
-              lhs[k][i] = true;
-            }
+        for (unsigned const c : {
+                 k,
+                 k + (Z - Y),
+                 k + (Y - X),
+                 k + (Z - X),
+             }) {
+          auto const i = c % p;
+          if (i != p - 1) {
+            lhs[k][i] = true;
           }
         }
-        {  // RHS
-          auto const d = DiagNum(false, Z, k);
-          auto const ad = DiagNum(true, X, k);
-          auto const q = (k + Z - X) % p;
-          assert(DiagNum(false, Z, k) == DiagNum(false, X, q));
-          auto pos = &rhs[k * m_StripeUnitSize];
-          XOR(pos, &diag[d * m_StripeUnitSize], m_StripeUnitSize);
-          XOR(pos, &adiag[ad * m_StripeUnitSize], m_StripeUnitSize);
-          XOR(pos, &row[q * m_StripeUnitSize], m_StripeUnitSize);
-        }
       }
+
+      auto rhs = row.clone();
+      for (unsigned const k : iota(p)) {
+        auto const d = DiagNum(false, Z, k);
+        auto const ad = DiagNum(true, X, k);
+        auto const q = (k + Z - X) % p;
+        assert(DiagNum(false, Z, k) == DiagNum(false, X, q));
+        auto pos = &rhs[k * m_StripeUnitSize];
+        XOR(pos, &diag[d * m_StripeUnitSize], m_StripeUnitSize);
+        XOR(pos, &adiag[ad * m_StripeUnitSize], m_StripeUnitSize);
+        XOR(pos, &row[q * m_StripeUnitSize], m_StripeUnitSize);
+      }
+
       auto const debug = [&lhs, &rhs, this]() {
         return;
         for (unsigned const r : iota(p)) {
@@ -242,34 +241,40 @@ bool CRTPProcessor::DecodeDataSymbols(
       };
 
       debug();
-      {  // Linear equations
-        for (unsigned const r : iota(p - 1)) {
-          if (!lhs[r][r]) {
-            for (unsigned const other : iota(r + 1, p)) {
-              if (lhs[other][r]) {
-                //                std::cerr << "Swap " << r << " & " << other << std::endl;
-                assert(other != r);
-                std::swap(lhs[r], lhs[other]);
-                auto* a = &rhs[r * m_StripeUnitSize];
-                auto* b = &rhs[other * m_StripeUnitSize];
-                std::swap_ranges(a, a + m_StripeUnitSize, b);
-                debug();
-                break;
-              }
-            }
-          }
-
-          assert(lhs[r][r]);
-          for (unsigned const other : iota(p)) {
-            if (r != other && lhs[other][r]) {
-              //              std::cerr << other << " ^= " << r << std::endl;
-              lhs[other] ^= lhs[r];
-              XOR(&rhs[other * m_StripeUnitSize], &rhs[r * m_StripeUnitSize], m_StripeUnitSize);
+      // Linear equations
+      for (unsigned const r : iota(p - 1)) {
+        if (!lhs[r][r]) {
+          for (unsigned const other : iota(r + 1, p)) {
+            if (lhs[other][r]) {
+              //                std::cerr << "Swap " << r << " & " << other << std::endl;
+              assert(other != r);
+              std::swap(lhs[r], lhs[other]);
+              auto* a = &rhs[r * m_StripeUnitSize];
+              auto* b = &rhs[other * m_StripeUnitSize];
+              std::swap_ranges(a, a + m_StripeUnitSize, b);
               debug();
+              break;
             }
           }
         }
+
+        assert(lhs[r][r]);
+        for (unsigned const other : iota(p)) {
+          if (r != other && lhs[other][r]) {
+            //              std::cerr << other << " ^= " << r << std::endl;
+            lhs[other] ^= lhs[r];
+            XOR(&rhs[other * m_StripeUnitSize], &rhs[r * m_StripeUnitSize], m_StripeUnitSize);
+            debug();
+          }
+        }
       }
+
+      for ([[maybe_unused]] unsigned const r : iota(p)) {
+        for ([[maybe_unused]] unsigned const c : iota(p - 1)) {
+          assert((r == c) == lhs[r][c]);
+        }
+      }
+
       for ([[maybe_unused]] auto const b : lhs.back()) {
         assert(!b);
       }

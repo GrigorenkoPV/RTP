@@ -101,6 +101,7 @@ class AlignedBuffer {
   [[nodiscard]] inline AlignedBuffer clone() const& {
     auto result = AlignedBuffer(this->size(), false);
     memcpy(result.data(), this->data(), this->size());
+    assert(*this == result);
     return result;
   }
 };
