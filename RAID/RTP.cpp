@@ -1,8 +1,6 @@
 #include "RTP.h"
 #include <algorithm>
 #include <cassert>
-#include <iomanip>
-#include <iostream>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -207,7 +205,7 @@ bool CRTPProcessor::DecodeDataSymbols(
              }) {
           auto const i = c % p;
           if (i != p - 1) {
-            lhs[k][i] = true;
+            lhs[k][i].flip();
           }
         }
       }
@@ -224,35 +222,17 @@ bool CRTPProcessor::DecodeDataSymbols(
         XOR(pos, &row[q * m_StripeUnitSize], m_StripeUnitSize);
       }
 
-      auto const debug = [&lhs, &rhs, this]() {
-        return;
-        for (unsigned const r : iota(p)) {
-          for (auto const& b : lhs[r]) {
-            std::cerr << b;
-          }
-          std::cerr << '\t';
-          for (unsigned const i : iota(m_StripeUnitSize)) {
-            std::cerr << std::hex << std::setfill('0') << std::setw(2)
-                      << (int)rhs[m_StripeUnitSize * r + i] << std::dec;
-          }
-          std::cerr << std::endl;
-        }
-        std::cerr << std::endl;
-      };
 
-      debug();
       // Linear equations
       for (unsigned const r : iota(p - 1)) {
         if (!lhs[r][r]) {
           for (unsigned const other : iota(r + 1, p)) {
             if (lhs[other][r]) {
-              //                std::cerr << "Swap " << r << " & " << other << std::endl;
               assert(other != r);
               std::swap(lhs[r], lhs[other]);
               auto* a = &rhs[r * m_StripeUnitSize];
               auto* b = &rhs[other * m_StripeUnitSize];
               std::swap_ranges(a, a + m_StripeUnitSize, b);
-              debug();
               break;
             }
           }
@@ -261,10 +241,8 @@ bool CRTPProcessor::DecodeDataSymbols(
         assert(lhs[r][r]);
         for (unsigned const other : iota(p)) {
           if (r != other && lhs[other][r]) {
-            //              std::cerr << other << " ^= " << r << std::endl;
             lhs[other] ^= lhs[r];
             XOR(&rhs[other * m_StripeUnitSize], &rhs[r * m_StripeUnitSize], m_StripeUnitSize);
-            debug();
           }
         }
       }
@@ -365,10 +343,8 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
   }
   auto const NumErasedRAID4Symbols = GetNumErasedRaid4Symbols(ErasureSetID);
 
-  if (SymbolID < p) {
-    // We have a RAID4 disk...
-    if (NumErasedRAID4Symbols == 1) {
-      // ...and we can use row parity
+  if (NumErasedRAID4Symbols == 1) {
+      // We can use row parity
       auto const size = Subsymbols2Decode * m_StripeUnitSize;
       auto read_buf = AlignedBuffer(size);
       auto xor_buf = AlignedBuffer(size, true);
@@ -385,13 +361,6 @@ bool CRTPProcessor::DecodeDataSubsymbols(unsigned long long int StripeID,
       memcpy(pDest, xor_buf.data(), size);
       return ok;
     }
-  } else {
-    // We have an (anti)diagonal disk...
-    if (NumErasedRAID4Symbols <= 1) {
-      // ...and we can recompute it
-      TODO("restore RAID4 and recompute (anti)diagonal");
-    }
-  }
 
   // No luck, we have to restore the entire symbol
   auto symbol = AlignedBuffer(SymbolSize());
