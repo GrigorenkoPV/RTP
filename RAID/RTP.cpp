@@ -437,6 +437,28 @@ bool CRTPProcessor::EncodeStripe(unsigned long long StripeID,  /// the stripe to
   return ok;
 }
 
+bool CRTPProcessor::GetEncodingStrategy(unsigned int ErasureSetID,
+                                        unsigned int StripeUnitID,
+                                        unsigned int Subsymbols2Encode) {
+  constexpr auto READ_WRITE = true;
+  constexpr auto UPDATE = false;
+  if (IsErased(ErasureSetID, p - 1) && IsErased(ErasureSetID, p) && IsErased(ErasureSetID, p + 1)) {
+    return UPDATE;
+  }
+  auto const first_subsymbol = StripeUnitID;
+  auto const first_symbol = first_subsymbol / m_StripeUnitsPerSymbol;
+  auto const last_subsymbol = StripeUnitID + Subsymbols2Encode;
+  assert(Subsymbols2Encode != 0);
+  auto const last_symbol = (last_subsymbol - 1) / m_StripeUnitSize + 1;
+  assert(last_symbol * m_StripeUnitSize >= last_subsymbol);
+  for (unsigned const disk : iota(first_symbol, last_symbol)) {
+    if (IsErased(ErasureSetID, disk)) {
+      return READ_WRITE;
+    }
+  }
+  return CRAIDProcessor::GetEncodingStrategy(ErasureSetID, StripeUnitID, Subsymbols2Encode);
+}
+
 /// update some information symbols and the corresponding check symbols
 ///@return true on success
 bool CRTPProcessor::UpdateInformationSymbols(
@@ -480,4 +502,27 @@ bool CRTPProcessor::CheckCodeword(unsigned long long StripeID,  /// the stripe t
     AddToDiags(diag, adiag, symbolId, symbol);
   }
   return row.isZero() && diag == read_symbol(p) && adiag == read_symbol(p + 1);
+}
+
+void CRTPProcessor::AddToDiag(AlignedBuffer& diag,
+                              bool isAnti,
+                              std::size_t symbolId,
+                              const AlignedBuffer& symbol) const {
+  assert(diag.size() == SymbolSize() || diag.size() == SymbolSize() + m_StripeUnitSize);
+  for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
+    auto const d = DiagNum(isAnti, symbolId, subsymbolID);
+    assert(d <= m_StripeUnitsPerSymbol);
+    auto const offset = d * m_StripeUnitSize;
+    if (offset < diag.size()) {
+      XOR(&diag[offset], &symbol[subsymbolID * m_StripeUnitSize], m_StripeUnitSize);
+    }
+  }
+}
+
+void CRTPProcessor::AddToDiags(AlignedBuffer& diag,
+                               AlignedBuffer& adiag,
+                               std::size_t symbolId,
+                               const AlignedBuffer& symbol) const {
+  AddToDiag(diag, false, symbolId, symbol);
+  AddToDiag(adiag, true, symbolId, symbol);
 }

@@ -76,12 +76,9 @@ class CRTPProcessor : public CRAIDProcessor {
                      size_t ThreadID               /// identifies the calling thread
                      ) override;
 
-  // TODO: remove this once UpdateInformationSymbols is implemented
-  inline bool GetEncodingStrategy(unsigned int ErasureSetID,
-                                  unsigned int StripeUnitID,
-                                  unsigned int Subsymbols2Encode) override {
-    return true;
-  }
+  bool GetEncodingStrategy(unsigned int ErasureSetID,
+                           unsigned int StripeUnitID,
+                           unsigned int Subsymbols2Encode) override;
 
  private:
   [[nodiscard]] inline size_t SymbolSize() const noexcept {
@@ -113,28 +110,15 @@ class CRTPProcessor : public CRAIDProcessor {
     }
   }
 
-  inline void AddToDiag(AlignedBuffer& diag,
-                        bool isAnti,
-                        std::size_t symbolId,
-                        AlignedBuffer const& symbol) const {
-    assert(diag.size() == SymbolSize() || diag.size() == SymbolSize() + m_StripeUnitSize);
-    for (std::size_t subsymbolID = 0; subsymbolID < m_StripeUnitsPerSymbol; ++subsymbolID) {
-      auto const d = DiagNum(isAnti, symbolId, subsymbolID);
-      assert(d <= m_StripeUnitsPerSymbol);
-      auto const offset = d * m_StripeUnitSize;
-      if (offset < diag.size()) {
-        XOR(&diag[offset], &symbol[subsymbolID * m_StripeUnitSize], m_StripeUnitSize);
-      }
-    }
-  }
+  void AddToDiag(AlignedBuffer& diag,
+                 bool isAnti,
+                 std::size_t symbolId,
+                 AlignedBuffer const& symbol) const;
 
-  inline void AddToDiags(AlignedBuffer& diag,
-                         AlignedBuffer& adiag,
-                         std::size_t symbolId,
-                         AlignedBuffer const& symbol) const {
-    AddToDiag(diag, false, symbolId, symbol);
-    AddToDiag(adiag, true, symbolId, symbol);
-  }
+  void AddToDiags(AlignedBuffer& diag,
+                  AlignedBuffer& adiag,
+                  std::size_t symbolId,
+                  AlignedBuffer const& symbol) const;
 
   [[nodiscard]] unsigned int GetNumErasedRaid4Symbols(unsigned int ErasureSetID) const;
   [[nodiscard]] std::array<int, 3> GetErasedSymbols(unsigned int ErasureSetID) const;
