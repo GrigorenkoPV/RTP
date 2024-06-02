@@ -55,7 +55,7 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
 {
     unsigned long long Size = A.GetCapacity();
     unsigned long long CounterSize = Size / sizeof (unsigned);
-    unsigned * pData = new unsigned[Size];
+    auto pData = std::make_unique<unsigned []>(Size);
     unsigned StripeUnitSize = A.GetStripeUnitSize();
     unsigned long long SizeInUnits = Size / StripeUnitSize;
 
@@ -70,7 +70,7 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
 	unsigned offset = time(NULL);
     for (unsigned i = 0; i < CounterSize; i++)
         pData[i] = i+offset;
-    unsigned char* pcData = (unsigned char*) pData;
+    auto pcData = (unsigned char*) pData.get();
     CDiskArray::tHandle F = A.open();
     double StartTime,StopTime,Dummy;
     GetTimes(StartTime,Dummy,Dummy);
@@ -81,7 +81,6 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
             if (A.write(F, StripeUnitSize*BlocksPerRequest, pcData + i * StripeUnitSize) != StripeUnitSize*BlocksPerRequest)
             {
                 cerr << "Unit " << i << " write failed\n";
-                delete[]pData;
                 return 2;
             };
 
@@ -91,7 +90,6 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
         if (A.write(F, Size, pcData) != Size)
         {
             cerr << "Write failed\n";
-            delete[]pData;
             return 2;
         };
     };
@@ -119,7 +117,7 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
     ResetOpCount();
 #endif
 
-    memset(pData, 0xff, Size);
+    memset(pData.get(), 0xff, Size);
     A.seek(F, 0, SEEK_SET);
     GetTimes(StartTime,Dummy,Dummy);
     if (BlocksPerRequest)
@@ -129,17 +127,15 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
             if (A.read(F, StripeUnitSize*BlocksPerRequest, pcData + i * StripeUnitSize) != StripeUnitSize*BlocksPerRequest)
             {
                 cerr << "Unit " << i << " read failed\n";
-                delete[]pData;
                 return 2;
             };
 
     }
     else
     {
-        if (A.read(F, Size, (unsigned char*) pData) != Size)
+        if (A.read(F, Size, (unsigned char*) pData.get()) != Size)
         {
             cerr << "Read failed\n";
-            delete[]pData;
             return 2;
         };
     };
@@ -157,11 +153,8 @@ int IntegerReadVerify(CDiskArray& A, ///the array to be inspected
         if (pData[i] != i+offset)
         {
             cerr << "Verify failed at offset " << (i * sizeof (unsigned)) << endl;
-            delete[]pData;
             return 3;
-
         };
-    delete[]pData;
     A.Unmount();
     cerr << "Verification successful\n";
     return 0;
