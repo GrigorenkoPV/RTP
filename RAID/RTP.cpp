@@ -65,8 +65,17 @@ bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
                                unsigned int ErasureSetID,
                                unsigned int SymbolID,
                                unsigned char* out) {
+  return ReadSymbol(StripeID, ErasureSetID, SymbolID, out, 0, m_StripeUnitsPerSymbol);
+}
+
+bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
+                               unsigned int ErasureSetID,
+                               unsigned int SymbolID,
+                               unsigned char* out,
+                               unsigned int start,
+                               unsigned int size) {
   assert(!IsErased(ErasureSetID, SymbolID));
-  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol, out);
+  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, start, size, out);
 }
 
 bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
@@ -74,8 +83,16 @@ bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
                                 unsigned int SymbolID,
                                 AlignedBuffer const& symbol) {
   assert(symbol.size() == SymbolSize());
-  return WriteStripeUnit(StripeID, ErasureSetID, SymbolID, 0, m_StripeUnitsPerSymbol,
-                         symbol.data());
+  return WriteSymbol(StripeID, ErasureSetID, SymbolID, symbol.data(), 0, symbol.size());
+}
+
+bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
+                                unsigned int ErasureSetID,
+                                unsigned int SymbolID,
+                                unsigned char const* data,
+                                unsigned start,
+                                unsigned size) {
+  return WriteStripeUnit(StripeID, ErasureSetID, SymbolID, start, size, data);
 }
 
 void operator^=(std::vector<bool>& lhs, std::vector<bool> const& rhs) {
@@ -440,22 +457,28 @@ bool CRTPProcessor::EncodeStripe(unsigned long long StripeID,  /// the stripe to
 bool CRTPProcessor::GetEncodingStrategy(unsigned int ErasureSetID,
                                         unsigned int StripeUnitID,
                                         unsigned int Subsymbols2Encode) {
+  assert(StripeUnitID + Subsymbols2Encode <= m_Dimension * m_StripeUnitsPerSymbol);
   constexpr auto READ_WRITE = true;
   constexpr auto UPDATE = false;
+  // If all the checksum disks are erased, there's nothing to talk about.
+  // Just update the symbols.
   if (IsErased(ErasureSetID, p - 1) && IsErased(ErasureSetID, p) && IsErased(ErasureSetID, p + 1)) {
     return UPDATE;
   }
-  auto const first_subsymbol = StripeUnitID;
-  auto const first_symbol = first_subsymbol / m_StripeUnitsPerSymbol;
-  auto const last_subsymbol = StripeUnitID + Subsymbols2Encode;
+  auto const from_subsymbol = StripeUnitID;
+  auto const from_symbol = from_subsymbol / m_StripeUnitsPerSymbol;
+  auto const to_subsymbol = StripeUnitID + Subsymbols2Encode;
   assert(Subsymbols2Encode != 0);
-  auto const last_symbol = (last_subsymbol - 1) / m_StripeUnitSize + 1;
-  assert(last_symbol * m_StripeUnitSize >= last_subsymbol);
-  for (unsigned const disk : iota(first_symbol, last_symbol)) {
+  auto const to_symbol = (to_subsymbol - 1) / m_StripeUnitSize + 1;
+  assert(to_symbol * m_StripeUnitSize >= to_subsymbol);
+  for (unsigned const disk : iota(from_symbol, to_symbol)) {
+    // If any of the target disks is erased, we would have to restore original contents,
+    // which is likely to cause the entire codeword to be read.
     if (IsErased(ErasureSetID, disk)) {
       return READ_WRITE;
     }
   }
+  // TODO: fine-tune this
   return CRAIDProcessor::GetEncodingStrategy(ErasureSetID, StripeUnitID, Subsymbols2Encode);
 }
 
@@ -469,8 +492,47 @@ bool CRTPProcessor::UpdateInformationSymbols(
     const unsigned char* pData,   /// new payload data symbols
     size_t ThreadID               /// the ID of the calling thread
 ) {
-  TODO("UpdateInformationSymbols")
-  return false;
+  auto init_deltas = [this, ErasureSetID](unsigned const pos) {
+    return std::vector<AlignedBuffer>(IsErased(ErasureSetID, pos) ? 0 : m_StripeUnitsPerSymbol);
+  };
+
+  auto row_deltas = init_deltas(p - 1);
+  auto diag_deltas = init_deltas(p);
+  auto adiag_deltas = init_deltas(p + 1);
+
+  auto const add_to_deltas = [this](std::vector<AlignedBuffer>& deltas, unsigned const pos,
+                                    unsigned char const* src) {
+    assert(pos <= m_StripeUnitsPerSymbol);
+    assert(deltas.size() == m_StripeUnitsPerSymbol || deltas.empty());
+    if (pos >= deltas.size()) {
+      return;
+    }
+    auto& dst = deltas[pos];
+    auto const size = m_StripeUnitSize;
+    if (dst.data()) {
+      XOR(dst.data(), src, size);
+    } else {
+      dst = AlignedBuffer(size);
+      memcpy(dst.data(), src, size);
+    }
+  };
+
+  for (unsigned const i : iota(Units2Update)) {
+    auto const ss = StripeUnitID + i;
+    auto const data = pData + i * m_StripeUnitSize;
+    auto const s = ss / m_StripeUnitsPerSymbol;
+    auto const r = ss % m_StripeUnitsPerSymbol;
+    add_to_deltas(row_deltas, r, data);
+    add_to_deltas(diag_deltas, DiagNum(false, s, r), data);
+    add_to_deltas(adiag_deltas, DiagNum(true, s, r), data);
+  }
+
+  bool ok = true;
+
+  TODO("Write new data to disks");
+  TODO("Apply deltas");
+
+  return ok;
 }
 
 /// check if the codeword is consistent

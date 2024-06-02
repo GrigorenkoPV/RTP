@@ -63,7 +63,7 @@ class CRTPProcessor : public CRAIDProcessor {
   /// update some information symbols and the corresponding check symbols
   ///@return true on success
   bool UpdateInformationSymbols(unsigned long long StripeID,  /// the stripe to be updated,
-                                unsigned ErasureSetID,  /// identifies the load balancing offset
+                                unsigned symbolId,      /// identifies the load balancing offset
                                 unsigned StripeUnitID,  /// the first stripe unit to be updated
                                 unsigned Units2Update,  /// the number of units to be updated
                                 const unsigned char* pData,  /// new payload data symbols
@@ -95,10 +95,24 @@ class CRTPProcessor : public CRAIDProcessor {
                                 unsigned SymbolID,      /// identifies the disk to be accessed
                                 unsigned char* out);
 
+  [[nodiscard]] bool ReadSymbol(unsigned long long StripeID,  /// the stripe to be checked
+                                unsigned ErasureSetID,  /// identifies the load balancing offset,
+                                unsigned SymbolID,      /// identifies the disk to be accessed
+                                unsigned char* out,
+                                unsigned start,
+                                unsigned size);
+
   [[nodiscard]] bool WriteSymbol(unsigned long long StripeID,  /// the stripe to be checked
                                  unsigned ErasureSetID,  /// identifies the load balancing offset,
                                  unsigned SymbolID,      /// identifies the disk to be accessed
                                  AlignedBuffer const& symbol);
+
+  [[nodiscard]] bool WriteSymbol(unsigned long long int StripeID,
+                                 unsigned int ErasureSetID,
+                                 unsigned int SymbolID,
+                                 const unsigned char* data,
+                                 unsigned int start,
+                                 unsigned int size);
 
   [[nodiscard]] inline std::size_t DiagNum(bool isAnti,
                                            std::size_t symbolId,
