@@ -65,15 +65,15 @@ bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
                                unsigned int ErasureSetID,
                                unsigned int SymbolID,
                                unsigned char* out) {
-  return ReadSymbol(StripeID, ErasureSetID, SymbolID, out, 0, m_StripeUnitsPerSymbol);
+  return ReadSubsymbols(StripeID, ErasureSetID, SymbolID, out, 0, m_StripeUnitsPerSymbol);
 }
 
-bool CRTPProcessor::ReadSymbol(unsigned long long int StripeID,
-                               unsigned int ErasureSetID,
-                               unsigned int SymbolID,
-                               unsigned char* out,
-                               unsigned int start,
-                               unsigned int size) {
+bool CRTPProcessor::ReadSubsymbols(unsigned long long int StripeID,
+                                   unsigned int ErasureSetID,
+                                   unsigned int SymbolID,
+                                   unsigned char* out,
+                                   unsigned int start,
+                                   unsigned int size) {
   assert(!IsErased(ErasureSetID, SymbolID));
   return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, start, size, out);
 }
@@ -83,15 +83,16 @@ bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
                                 unsigned int SymbolID,
                                 AlignedBuffer const& symbol) {
   assert(symbol.size() == SymbolSize());
-  return WriteSymbol(StripeID, ErasureSetID, SymbolID, symbol.data(), 0, symbol.size());
+  return WriteSubsymbols(StripeID, ErasureSetID, SymbolID, symbol.data(), 0,
+                         m_StripeUnitsPerSymbol);
 }
 
-bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
-                                unsigned int ErasureSetID,
-                                unsigned int SymbolID,
-                                unsigned char const* data,
-                                unsigned start,
-                                unsigned size) {
+bool CRTPProcessor::WriteSubsymbols(unsigned long long int StripeID,
+                                    unsigned int ErasureSetID,
+                                    unsigned int SymbolID,
+                                    unsigned char const* data,
+                                    unsigned start,
+                                    unsigned size) {
   return WriteStripeUnit(StripeID, ErasureSetID, SymbolID, start, size, data);
 }
 
@@ -469,7 +470,7 @@ bool CRTPProcessor::GetEncodingStrategy(unsigned int ErasureSetID,
   auto const from_symbol = from_subsymbol / m_StripeUnitsPerSymbol;
   auto const to_subsymbol = StripeUnitID + Subsymbols2Encode;
   assert(Subsymbols2Encode != 0);
-  auto const to_symbol = (to_subsymbol - 1) / m_StripeUnitSize + 1;
+  auto const to_symbol = (to_subsymbol - 1) / m_StripeUnitsPerSymbol + 1;
   assert(to_symbol * m_StripeUnitSize >= to_subsymbol);
   for (unsigned const disk : iota(from_symbol, to_symbol)) {
     // If any of the target disks is erased, we would have to restore original contents,
@@ -496,24 +497,29 @@ bool CRTPProcessor::UpdateInformationSymbols(
     return std::vector<AlignedBuffer>(IsErased(ErasureSetID, pos) ? 0 : m_StripeUnitsPerSymbol);
   };
 
-  auto row_deltas = init_deltas(p - 1);
-  auto diag_deltas = init_deltas(p);
-  auto adiag_deltas = init_deltas(p + 1);
+  auto row = init_deltas(p - 1);
+  auto diag = init_deltas(p);
+  auto adiag = init_deltas(p + 1);
 
-  auto const add_to_deltas = [this](std::vector<AlignedBuffer>& deltas, unsigned const pos,
-                                    unsigned char const* src) {
-    assert(pos <= m_StripeUnitsPerSymbol);
-    assert(deltas.size() == m_StripeUnitsPerSymbol || deltas.empty());
-    if (pos >= deltas.size()) {
+  bool ok = true;
+
+  auto const update_checksum = [this, &ok, StripeID, ErasureSetID](
+                                   std::vector<AlignedBuffer>& checksumSubsymbols,
+                                   unsigned const symbolId, unsigned const subsymbolId,
+                                   unsigned char const* src) {
+    assert(subsymbolId <= m_StripeUnitsPerSymbol);
+    assert(checksumSubsymbols.size() == m_StripeUnitsPerSymbol || checksumSubsymbols.empty());
+    if (subsymbolId >= checksumSubsymbols.size()) {
       return;
     }
-    auto& dst = deltas[pos];
+    auto dst = checksumSubsymbols[subsymbolId].data();
     auto const size = m_StripeUnitSize;
-    if (dst.data()) {
-      XOR(dst.data(), src, size);
+    if (dst) {
+      XOR(dst, src, size);
     } else {
-      dst = AlignedBuffer(size);
-      memcpy(dst.data(), src, size);
+      dst = (checksumSubsymbols[subsymbolId] = AlignedBuffer(size)).data();
+      ok &= ReadSubsymbols(StripeID, ErasureSetID, symbolId, dst, subsymbolId, 1);
+      XOR(dst, src, size);
     }
   };
 
@@ -522,15 +528,26 @@ bool CRTPProcessor::UpdateInformationSymbols(
     auto const data = pData + i * m_StripeUnitSize;
     auto const s = ss / m_StripeUnitsPerSymbol;
     auto const r = ss % m_StripeUnitsPerSymbol;
-    add_to_deltas(row_deltas, r, data);
-    add_to_deltas(diag_deltas, DiagNum(false, s, r), data);
-    add_to_deltas(adiag_deltas, DiagNum(true, s, r), data);
+    update_checksum(row, p - 1, r, data);
+    update_checksum(diag, p, DiagNum(false, s, r), data);
+    update_checksum(adiag, p + 1, DiagNum(true, s, r), data);
+    ok &= WriteSubsymbols(StripeID, ErasureSetID, s, data, r, 1);
   }
 
-  bool ok = true;
+  auto const write_checksum = [this, &ok, StripeID, ErasureSetID](
+                                  std::vector<AlignedBuffer> const& checksum,
+                                  unsigned const symbolId) {
+    for (unsigned const ss : iota(checksum.size())) {
+      auto const data = checksum[ss].data();
+      if (data != nullptr) {
+        ok &= WriteSubsymbols(StripeID, ErasureSetID, symbolId, data, ss, 1);
+      }
+    }
+  };
 
-  TODO("Write new data to disks");
-  TODO("Apply deltas");
+  write_checksum(row, p - 1);
+  write_checksum(diag, p);
+  write_checksum(adiag, p + 1);
 
   return ok;
 }
