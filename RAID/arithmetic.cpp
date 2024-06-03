@@ -57,8 +57,6 @@ Depending on alignment of the arrays, different implementations are used*/
 void XOR ( unsigned char* pA,const unsigned char* pB,unsigned Size )
 {
   assert(Size % ARITHMETIC_ALIGNMENT == 0);
-  assert(isAligned(pA));
-  assert(isAligned(pB));
 
     LOCKEDADD(opXOR,Size);
 #ifdef AVX
@@ -117,9 +115,6 @@ Depending on alignment of the arrays, different implementations are used*/
 void XOR (const unsigned char* pA,const unsigned char* pB,unsigned char* pC,unsigned Size )
 {
   assert(Size % ARITHMETIC_ALIGNMENT == 0);
-  assert(isAligned(pA));
-  assert(isAligned(pB));
-  assert(isAligned(pC));
 
     LOCKEDADD(opXOR,Size);
 #ifdef AVX
