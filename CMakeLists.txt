@@ -12,11 +12,33 @@ elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fmax-errors=0)
 endif ()
 
+# Enable assertions in std for Debug builds
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if (NOT (MSVC))
+        add_definitions("-D_GLIBCXX_DEBUG")
+        add_definitions("-D_LIBCPP_ENABLE_ASSERTIONS=1")
+    endif ()
+endif ()
 
-add_compile_options(-mavx)
+# Optimize non-Debug builds more
 if (NOT (CMAKE_BUILD_TYPE STREQUAL "Debug"))
     add_compile_options(-O3 -finline)
 endif ()
+
+# LTO
+include(CheckIPOSupported)
+check_ipo_supported(RESULT lto_supported OUTPUT error)
+if (NOT (lto_supported))
+    message(STATUS "IPO / LTO not supported: <${error}>")
+elseif (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(STATUS "IPO / LTO supported, but not enabled (Debug build)")
+else ()
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    message(STATUS "IPO / LTO enabled")
+endif ()
+
+# Needed for arithmetic.cpp
+add_compile_options(-mavx)
 
 include_directories(./Include ./confuse)
 
@@ -36,10 +58,8 @@ add_executable(testbed
         RAID/RTP.cpp
 )
 
+# Enable sanitizers for Debug builds
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(testbed PUBLIC "-fsanitize=undefined,address")
     target_link_options(testbed PUBLIC "-fsanitize=undefined,address")
-    if (NOT (MSVC))
-        add_definitions("-D_GLIBCXX_DEBUG")
-    endif ()
 endif ()
