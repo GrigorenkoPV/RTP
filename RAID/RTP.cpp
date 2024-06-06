@@ -73,9 +73,9 @@ bool CRTPProcessor::ReadSubsymbols(unsigned long long int StripeID,
                                    unsigned int SymbolID,
                                    unsigned char* out,
                                    unsigned int start,
-                                   unsigned int size) {
+                                   unsigned int count) {
   assert(!IsErased(ErasureSetID, SymbolID));
-  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, start, size, out);
+  return ReadStripeUnit(StripeID, ErasureSetID, SymbolID, start, count, out);
 }
 
 bool CRTPProcessor::WriteSymbol(unsigned long long int StripeID,
@@ -92,8 +92,8 @@ bool CRTPProcessor::WriteSubsymbols(unsigned long long int StripeID,
                                     unsigned int SymbolID,
                                     unsigned char const* data,
                                     unsigned start,
-                                    unsigned size) {
-  return WriteStripeUnit(StripeID, ErasureSetID, SymbolID, start, size, data);
+                                    unsigned count) {
+  return WriteStripeUnit(StripeID, ErasureSetID, SymbolID, start, count, data);
 }
 
 void operator^=(std::vector<bool>& lhs, std::vector<bool> const& rhs) {
@@ -479,6 +479,10 @@ bool CRTPProcessor::GetEncodingStrategy(unsigned int ErasureSetID,
       return READ_WRITE;
     }
   }
+  for (unsigned const i : iota(from_subsymbol, to_subsymbol)) {
+    [[maybe_unused]] auto const symbol = i / m_StripeUnitsPerSymbol;
+    assert(from_symbol <= symbol && symbol < to_symbol);
+  }
   // TODO: fine-tune this
   return CRAIDProcessor::GetEncodingStrategy(ErasureSetID, StripeUnitID, Subsymbols2Encode);
 }
@@ -493,61 +497,131 @@ bool CRTPProcessor::UpdateInformationSymbols(
     const unsigned char* pData,   /// new payload data symbols
     size_t ThreadID               /// the ID of the calling thread
 ) {
-  auto init_deltas = [this, ErasureSetID](unsigned const pos) {
-    return std::vector<AlignedBuffer>(IsErased(ErasureSetID, pos) ? 0 : m_StripeUnitsPerSymbol);
-  };
-
-  auto row = init_deltas(p - 1);
-  auto diag = init_deltas(p);
-  auto adiag = init_deltas(p + 1);
-
+  auto const symbolSize = SymbolSize();
   bool ok = true;
 
-  auto const update_checksum = [this, &ok, StripeID, ErasureSetID](
-                                   std::vector<AlignedBuffer>& checksumSubsymbols,
-                                   unsigned const symbolId, unsigned const subsymbolId,
-                                   unsigned char const* src) {
-    assert(subsymbolId <= m_StripeUnitsPerSymbol);
-    assert(checksumSubsymbols.size() == m_StripeUnitsPerSymbol || checksumSubsymbols.empty());
-    if (subsymbolId >= checksumSubsymbols.size()) {
-      return;
+  // If all the checksum disks are erased, there's nothing to talk about.
+  // Just update the symbols.
+  if (IsErased(ErasureSetID, p - 1) && IsErased(ErasureSetID, p) && IsErased(ErasureSetID, p + 1)) {
+    for (unsigned const offset : iota(Units2Update)) {
+      auto const i = StripeUnitID + offset;
+      auto const symbol = i / m_StripeUnitsPerSymbol;
+      auto const subSymbol = i % m_StripeUnitsPerSymbol;
+      assert(!IsErased(ErasureSetID, symbol));
+      assert(symbol < m_Dimension);
+      ok &= WriteSubsymbols(StripeID, ErasureSetID, symbol, pData, subSymbol, 1);
+      pData += m_StripeUnitSize;
     }
-    auto dst = checksumSubsymbols[subsymbolId].data();
-    auto const size = m_StripeUnitSize;
-    if (dst) {
-      XOR(dst, src, size);
-    } else {
-      dst = (checksumSubsymbols[subsymbolId] = AlignedBuffer(size)).data();
-      ok &= ReadSubsymbols(StripeID, ErasureSetID, symbolId, dst, subsymbolId, 1);
-      XOR(dst, src, size);
-    }
-  };
-
-  for (unsigned const i : iota(Units2Update)) {
-    auto const ss = StripeUnitID + i;
-    auto const data = pData + i * m_StripeUnitSize;
-    auto const s = ss / m_StripeUnitsPerSymbol;
-    auto const r = ss % m_StripeUnitsPerSymbol;
-    update_checksum(row, p - 1, r, data);
-    update_checksum(diag, p, DiagNum(false, s, r), data);
-    update_checksum(adiag, p + 1, DiagNum(true, s, r), data);
-    ok &= WriteSubsymbols(StripeID, ErasureSetID, s, data, r, 1);
+    return ok;
   }
 
-  auto const write_checksum = [this, &ok, StripeID, ErasureSetID](
-                                  std::vector<AlignedBuffer> const& checksum,
-                                  unsigned const symbolId) {
-    for (unsigned const ss : iota(checksum.size())) {
-      auto const data = checksum[ss].data();
-      if (data != nullptr) {
-        ok &= WriteSubsymbols(StripeID, ErasureSetID, symbolId, data, ss, 1);
+  struct LazyChecksum {
+    AlignedBuffer checksum;
+    std::vector<bool> initialized;
+    unsigned disk;
+  };
+
+  auto const init_lazy_checksum = [this, symbolSize](unsigned const pos) -> LazyChecksum {
+    return LazyChecksum{.checksum = AlignedBuffer(symbolSize),
+                        .initialized = std::vector<bool>(m_StripeUnitsPerSymbol),
+                        .disk = pos};
+  };
+  auto const maybe_init_lazy_checksum = [this, ErasureSetID,
+                                         &init_lazy_checksum](unsigned const pos) -> LazyChecksum {
+    return IsErased(ErasureSetID, pos) ? LazyChecksum{.checksum = AlignedBuffer(),
+                                                      .initialized = std::vector<bool>(),
+                                                      .disk = pos}
+                                       : init_lazy_checksum(pos);
+  };
+
+  auto row = init_lazy_checksum(p - 1);
+  auto diag = maybe_init_lazy_checksum(p);
+  auto adiag = maybe_init_lazy_checksum(p + 1);
+
+  auto const add_to_diag = [this, &ok, symbolSize, StripeID, ErasureSetID](
+                               LazyChecksum& lazyChecksum, unsigned pos, unsigned char const* src) {
+    auto& [checksum, initialized, checksumDisk] = lazyChecksum;
+    if (!checksum.size()) {
+      assert(initialized.empty());
+      return;
+    }
+    assert(checksum.size() == symbolSize);
+    assert(initialized.size() == m_StripeUnitsPerSymbol);
+    if (pos >= initialized.size()) {
+      assert(pos == m_StripeUnitsPerSymbol);
+      return;
+    }
+    auto const dst = checksum.data() + pos * m_StripeUnitSize;
+    if (!initialized[pos]) {
+      ok &= ReadSubsymbols(StripeID, ErasureSetID, checksumDisk, dst, pos, 1);
+      initialized[pos] = true;
+    }
+    XOR(dst, src, m_StripeUnitSize);
+  };
+
+  auto buf = AlignedBuffer(m_StripeUnitSize);
+  for (unsigned const offset : iota(Units2Update)) {
+    auto const i = StripeUnitID + offset;
+    auto const symbol = i / m_StripeUnitsPerSymbol;
+    auto const subSymbol = i % m_StripeUnitsPerSymbol;
+    assert(!IsErased(ErasureSetID, symbol));
+    assert(symbol < m_Dimension);
+    auto const d = DiagNum(false, symbol, subSymbol);
+    auto const ad = DiagNum(true, symbol, subSymbol);
+    ok &= ReadSubsymbols(StripeID, ErasureSetID, symbol, buf.data(), subSymbol, 1);
+    XOR(buf.data(), pData, m_StripeUnitSize);
+    auto const row_dst = row.checksum.data() + subSymbol * m_StripeUnitSize;
+    if (row.initialized[subSymbol]) {
+      XOR(row_dst, buf.data(), m_StripeUnitSize);
+    } else {
+      memcpy(row_dst, buf.data(), m_StripeUnitSize);
+      row.initialized[subSymbol] = true;
+    }
+    add_to_diag(diag, d, buf.data());
+    add_to_diag(adiag, ad, buf.data());
+    ok &= WriteSubsymbols(StripeID, ErasureSetID, symbol, pData, subSymbol, 1);
+    pData += m_StripeUnitSize;
+  }
+
+  for (unsigned const i : iota(m_StripeUnitsPerSymbol)) {
+    if (row.initialized[i]) {
+      auto const d = DiagNum(false, row.disk, i);
+      auto const ad = DiagNum(true, row.disk, i);
+      auto const src = row.checksum.data() + i * m_StripeUnitSize;
+      add_to_diag(diag, d, src);
+      add_to_diag(adiag, ad, src);
+    }
+  }
+
+  auto const write_diag = [this, &ok, symbolSize, StripeID,
+                           ErasureSetID](LazyChecksum const& lazyChecksum) {
+    auto& [checksum, initialized, checksumDisk] = lazyChecksum;
+    if (!checksum.size()) {
+      assert(initialized.empty());
+      return;
+    }
+    assert(!IsErased(ErasureSetID, checksumDisk));
+    assert(checksum.size() == symbolSize);
+    assert(initialized.size() == m_StripeUnitsPerSymbol);
+    for (unsigned const i : iota(m_StripeUnitsPerSymbol)) {
+      if (initialized[i]) {
+        ok &= WriteSubsymbols(StripeID, ErasureSetID, checksumDisk,
+                              checksum.data() + i * m_StripeUnitSize, i, 1);
       }
     }
   };
 
-  write_checksum(row, p - 1);
-  write_checksum(diag, p);
-  write_checksum(adiag, p + 1);
+  if (!IsErased(ErasureSetID, row.disk)) {
+    for (unsigned const i : iota(m_StripeUnitsPerSymbol)) {
+      if (row.initialized[i]) {
+        ok &= ReadSubsymbols(StripeID, ErasureSetID, row.disk, buf.data(), i, 1);
+        XOR(buf.data(), row.checksum.data() + i * m_StripeUnitSize, m_StripeUnitSize);
+        ok &= WriteSubsymbols(StripeID, ErasureSetID, row.disk, buf.data(), i, 1);
+      }
+    }
+  }
+  write_diag(diag);
+  write_diag(adiag);
 
   return ok;
 }

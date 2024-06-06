@@ -62,9 +62,9 @@ class CRTPProcessor : public CRAIDProcessor {
 
   /// update some information symbols and the corresponding check symbols
   ///@return true on success
-  bool UpdateInformationSymbols(unsigned long long StripeID,  /// the stripe to be updated,
+  bool UpdateInformationSymbols(unsigned long long lazyChecksum,  /// the stripe to be updated,
                                 unsigned symbolId,      /// identifies the load balancing offset
-                                unsigned StripeUnitID,  /// the first stripe unit to be updated
+                                unsigned src,           /// the first stripe unit to be updated
                                 unsigned Units2Update,  /// the number of units to be updated
                                 const unsigned char* pData,  /// new payload data symbols
                                 size_t ThreadID              /// the ID of the calling thread
@@ -101,7 +101,7 @@ class CRTPProcessor : public CRAIDProcessor {
       unsigned SymbolID,            /// identifies the disk to be accessed
       unsigned char* out,
       unsigned start,
-      unsigned size);
+      unsigned count);
 
   [[nodiscard]] bool WriteSymbol(unsigned long long StripeID,  /// the stripe to be checked
                                  unsigned ErasureSetID,  /// identifies the load balancing offset,
@@ -113,7 +113,7 @@ class CRTPProcessor : public CRAIDProcessor {
                                      unsigned int SymbolID,
                                      const unsigned char* data,
                                      unsigned int start,
-                                     unsigned int size);
+                                     unsigned int count);
 
   [[nodiscard]] inline std::size_t DiagNum(bool isAnti,
                                            std::size_t symbolId,
