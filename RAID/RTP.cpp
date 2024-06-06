@@ -483,8 +483,11 @@ bool CRTPProcessor::GetEncodingStrategy(unsigned int ErasureSetID,
     [[maybe_unused]] auto const symbol = i / m_StripeUnitsPerSymbol;
     assert(from_symbol <= symbol && symbol < to_symbol);
   }
-  // TODO: fine-tune this
-  return CRAIDProcessor::GetEncodingStrategy(ErasureSetID, StripeUnitID, Subsymbols2Encode);
+  if (4 * Subsymbols2Encode < 3 * m_StripeUnitsPerSymbol * m_Dimension) {
+    return UPDATE;
+  } else {
+    return READ_WRITE;
+  }
 }
 
 /// update some information symbols and the corresponding check symbols
