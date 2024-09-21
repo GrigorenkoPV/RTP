@@ -55,6 +55,7 @@ add_executable(testbed
         src/locker.cpp
         confuse/confuse.c
         confuse/lexer.c
+        RAID/RTP.cpp
 )
 
 # Enable sanitizers for Debug builds

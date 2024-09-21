@@ -22,6 +22,7 @@
 #include "usecase.h"
 #include "array.h"
 #include "RAID5.h"
+#include "RTP.h"
 #ifndef STUDENTBUILD
 #include "RAID6.h"
 #include "Cauchy.h"
@@ -89,6 +90,7 @@ cfg_opt_t opts[] ={
     PARAMCONFIG(RDP),
 #endif
     PARAMCONFIG(RS),
+    PARAMCONFIG(RTP),
     CFG_END()
 };
 char* pArrayStates[] = {"Uninitialized", "Failed", "Degraded", "Normal "};
