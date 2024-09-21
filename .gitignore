@@ -4,8 +4,6 @@ build*/
 .idea/
 .vscode/
 
-*.pdf
-
 /in.*
 /out.*
 
